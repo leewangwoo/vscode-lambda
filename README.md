@@ -1,100 +1,133 @@
-> [!IMPORTANT]
-> This project has been moved into the main VS Code repository and this repository is now archived.
->
-> Active development continues at:
-> https://github.com/microsoft/vscode
->
-> Please open issues and pull requests in the VS Code repository instead.
+# VS Code Lambda
 
----
+인터넷이 차단된 내부망(폐쇄망)에서 GitHub Copilot Chat을 로컬 LLM(LiteLLM)과 연동하여 사용할 수 있도록 커스터마이징한 VS Code 확장 프로젝트입니다.
 
-# GitHub Copilot - Your autonomous AI peer programmer
+## 개요
 
-**[GitHub Copilot](https://code.visualstudio.com/docs/copilot/overview)** is an AI peer programming tool that transforms how you write code in Visual Studio Code.
+VS Code Lambda는 다음 세 가지 목표를 달성합니다:
 
-GitHub Copilot agents handle complete coding tasks end-to-end, autonomously planning work, editing files, running commands, and self-correcting when they hit errors. You can also leverage inline suggestions for quick coding assistance and inline chat for precise, focused edits directly in the editor.
+1. **오프라인 LLM 채팅** — GitHub 로그인 없이 내부망의 LiteLLM 프록시(llama.cpp 백엔드)를 통해 AI 채팅 사용
+2. **내부 확장 갤러리** — VS Code 확장을 마켓플레이스 대신 내부 갤러리에서 검색·설치·업데이트
+3. **내부 Python 패키지 저장소** — 인터넷 없이 `pip install`로 Python 패키지 설치
 
-**Sign up for [GitHub Copilot Free](https://github.com/settings/copilot?utm_source=vscode-chat-readme&utm_medium=first&utm_campaign=2025mar-em-MSFT-signup)!**
+## 시스템 구성
 
-![Working with GitHub Copilot agent mode to make edits to code in your workspace](https://github.com/microsoft/vscode-docs/raw/732b9599e49ee7034744a3e5b0485b7fb4bdf530/docs/copilot/images/getting-started/custom-reviewer-mode.png)
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       내부망 (폐쇄망)                           │
+│                                                               │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐          │
+│  │ VS Code     │  │ 확장 갤러리   │  │ devpi       │          │
+│  │ 클라이언트   │  │ :8000        │  │ :3141       │          │
+│  │ (Windows)   │  │ (FastAPI)    │  │ (PyPI Proxy)│          │
+│  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘          │
+│         │                │                  │                  │
+│         │ 확장 설치/업데이트 │ VSIX 서빙       │ pip 패키지       │
+│         │                │                  │                  │
+│  ┌──────┴──────┐  ┌──────┴───────┐                            │
+│  │ LiteLLM     │  │ llama.cpp    │                            │
+│  │ :8088       │──│ :8084/8085   │                            │
+│  │ (LLM Proxy) │  │ (Qwen 모델)   │                            │
+│  └─────────────┘  └──────────────┘                            │
+│                                                               │
+│              ┌───────────────────┐                            │
+│              │ Docker Host       │                            │
+│              │ (Linux 서버)       │                            │
+│              └───────────────────┘                            │
+└──────────────────────────────────────────────────────────────┘
+```
 
+## 포트 할당
 
-## Getting access to GitHub Copilot
+| 서비스 | 포트 | 용도 |
+|--------|------|------|
+| 확장 갤러리 서버 | 8000 | VS Code 확장 검색/설치/업데이트 |
+| LiteLLM 프록시 | 8088 | LLM 모델 라우팅 |
+| devpi (PyPI 프록시) | 3141 | Python 패키지 관리 |
+| llama.cpp (Qwen3.6-35B) | 8084 | MoE 모델 서버 |
+| llama.cpp (Qwen3.6-27B) | 8085 | Dense 모델 서버 |
 
-Sign up for [GitHub Copilot Free](https://github.com/settings/copilot?utm_source=vscode-chat-readme&utm_medium=second&utm_campaign=2025mar-em-MSFT-signup), or request access from your enterprise admin.
+## 디렉토리 구조
 
-To access GitHub Copilot, an active GitHub Copilot subscription is required. You can read more about our business and individual offerings at [github.com/features/copilot](https://github.com/features/copilot?utm_source=vscode-chat&utm_medium=readme&utm_campaign=2025mar-em-MSFT-signup).
+```
+vscode-lambda/
+├── src/                        # 확장 소스 코드
+├── gallery-server/             # 확장 갤러리 서버 (FastAPI + Docker)
+│   ├── server.py               # 갤러리 API 서버
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── scripts/                # 갤러리 관리 스크립트
+├── devpi/                      # Python 패키지 서버
+│   ├── docker-compose.yml
+│   └── scripts/                # 패키지 동기화 및 pip 설정 스크립트
+├── lambda-chat-deploy/         # 클라이언트 배포 패키지
+│   ├── install.bat             # 원클릭 설치 스크립트
+│   ├── configure-vscode.ps1    # VS Code 갤러리 URL 설정
+│   └── copilot-chat-*.vsix     # Lambda 확장 파일
+├── OFFLINE-GUIDE.md            # 상세 배포 가이드 (한글)
+└── package.json                # 확장 메타데이터
+```
 
-## Build with autonomous agents
+## 빠른 시작
 
-**Let AI agents implement complex features end-to-end**. Give an agent a high-level task and it breaks the work into steps, edits multiple files, runs terminal commands, and self-corrects when it hits errors or failing tests. Agents excel at [building new features](https://code.visualstudio.com/docs/copilot/agents/overview), [debugging and fixing failing tests](https://code.visualstudio.com/docs/copilot/guides/debug-with-copilot), refactoring codebases, and [collaborating via pull requests](https://code.visualstudio.com/docs/copilot/agents/cloud-agents).
+### 서버 설정 (내부망 Linux 서버)
 
-**Manage sessions from a central view.** Run multiple [agent sessions](https://code.visualstudio.com/docs/copilot/chat/chat-sessions) in parallel and track them in one place. Monitor session status, switch between active work, review file changes, and resume where you left off.
+```bash
+# 1. 확장 갤러리 서버 시작
+cd gallery-server
+docker compose up -d --build
 
-**Run agents with your preferred harness.** Use agents locally in VS Code, in the background via Copilot CLI, or Cloud via Copilot Coding Agent. You can also work with providers like Claude and Codex, and hand tasks off between agent types with context preserved all within the VS Code.
+# 2. Python 패키지 서버 시작
+cd ../devpi
+docker compose up -d
 
-![Video showing an agent session building a complete feature in VS Code.](https://github.com/microsoft/vscode-docs/raw/refs/heads/main/docs/copilot/images/overview/agents-intro.gif)
+# 3. Lambda 확장을 갤러리에 등록
+./gallery-server/scripts/publish.sh lambda-chat-deploy/copilot-chat-999.1.0.vsix http://localhost:8000
+```
 
-**Use agents to [plan before you build](https://code.visualstudio.com/docs/copilot/agents/planning) with the Plan agent**, which breaks tasks into structured implementation plans and asks clarifying questions. When your plan is ready, hand it off to an implementation agent to execute it. You can also [delegate tasks to cloud agents](https://code.visualstudio.com/docs/copilot/agents/cloud-agents) that create branches, implement changes, and open pull requests for your team to review.
+### 클라이언트 설정 (내부망 Windows PC)
 
-## More ways to code with AI
+```powershell
+# 1. 확장 설치 + 갤러리 등록 (원클릭)
+.\lambda-chat-deploy\install.bat
 
-**Receive intelligent inline suggestions** as you type with [ghost text suggestions](https://aka.ms/vscode-completions) and [next edit suggestions](https://aka.ms/vscode-nes), helping you write code faster. Copilot predicts your next logical change, and you can accept suggestions with the Tab key.
+# 2. Python pip 설정
+.\devpi\scripts\configure-pip.ps1 -DevpiUrl "http://<서버IP>:3141"
 
-![Video showing Copilot next edit suggestions.](https://github.com/microsoft/vscode-docs/raw/refs/heads/main/docs/copilot/images/inline-suggestions/nes-video.gif)
+# 3. VS Code 재시작 후 채팅 패널에서 사용
+```
 
-**Use inline chat for targeted edits** by pressing `Ctrl+I`/`Cmd+I` to open a chat prompt directly in the editor. Describe a change and Copilot suggests edits in place for refactoring methods, adding error handling, or explaining complex algorithms without leaving your editor.
+상세한 설정 방법은 [OFFLINE-GUIDE.md](./OFFLINE-GUIDE.md)를 참조하세요.
 
-![Inline chat in VS Code](https://code.visualstudio.com/assets/docs/copilot/copilot-chat/inline-chat-question-example.png)
+## 주요 기능
 
+### 오프라인 LLM 채팅
 
-## Customize AI for your workflow
+- GitHub 로그인 불필요 (Mock 인증으로 우회)
+- LiteLLM 프록시를 통한 로컬 모델(Qwen3.6) 사용
+- 채팅 패널에서 모델 선택 및 대화
+- 스트리밍 응답 지원 (LiteLLM 호환성 처리 포함)
 
-**Agents work best when they understand your project's conventions and have the right tools**. Tailor Copilot so it generates code that fits your codebase from the start.
+### 내부 확장 갤러리
 
-**Project context.** Use [custom instructions](https://code.visualstudio.com/docs/copilot/customization/custom-instructions) to specify project-wide or task-specific context and coding guidelines.
+- VS Code 확장 탭에서 내부 갤러리 검색/설치
+- 자동 업데이트 (버전 비교 → 알림 → 설치)
+- 버전 관리 (semver 기반)
+- 마켓플레이스 확장 다운로드 → 내부 갤러리 등록
 
-**Add specialized capabilities**. Teach Copilot specialized capabilities with [agent skills](https://code.visualstudio.com/docs/copilot/customization/agent-skills) or define specialized personas with [custom agents](https://code.visualstudio.com/docs/copilot/customization/custom-agents).
+### 내부 Python 패키지 관리
 
-**Connect to external tools and services**. Extend agents further with tools from [MCP servers](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) and extensions to give Copilot a gateway to external data sources, APIs, or specialized tools.
+- devpi를 통한 PyPI 프록시/캐시
+- 외부망에서 패키지 동기화
+- 사용자는 `pip install`만 하면 됨
 
-### Supported languages and frameworks
+## 기술 스택
 
-GitHub Copilot works on any language, including Java, PHP, Python, JavaScript, Ruby, Go, C#, or C++. Because it’s been trained on languages in public repositories, it works for most popular languages, libraries and frameworks.
+- **확장**: TypeScript, VS Code Extension API
+- **갤러리 서버**: Python, FastAPI, Docker
+- **패키지 서버**: devpi-server, Docker
+- **LLM 백엔드**: llama.cpp, LiteLLM, Qwen3.6
 
-### Version compatibility
+## 라이선스
 
-As Copilot Chat releases in lockstep with VS Code due to its deep UI integration, every new version of Copilot Chat is only compatible with the latest and newest release of VS Code. This means that if you are using an older version of VS Code, you will not be able to use the latest Copilot Chat.
-
-Only the latest Copilot Chat versions will use the latest models provided by the Copilot service, as even minor model upgrades require prompt changes and fixes in the extension.
-
-### Privacy and preview terms
-
-By using Copilot Chat you agree to [GitHub Copilot chat preview terms](https://docs.github.com/en/early-access/copilot/github-copilot-chat-technical-preview-license-terms). Review the [transparency note](https://aka.ms/CopilotChatTransparencyNote) to understand about usage, limitations and ways to improve Copilot Chat during the technical preview.
-
-Please refer to our [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement) to learn about the data we collect, how we use it, and the controls available to you.
-
-To get the latest security fixes, please use the latest version of the Copilot extension and VS Code.
-
-### Resources & next steps
-* **[Sign up for GitHub Copilot Free](https://github.com/settings/copilot?utm_source=vscode-chat-readme&utm_medium=third&utm_campaign=2025mar-em-MSFT-signup)**: Explore Copilot's AI capabilities at no cost before upgrading to a paid plan.
-   * If you're using Copilot for your business, check out [Copilot Business](https://docs.github.com/en/copilot/copilot-business/about-github-copilot-business) and [Copilot Enterprise](https://docs.github.com/en/copilot/github-copilot-enterprise/overview/about-github-copilot-enterprise).
-* **[Copilot Quickstart](https://code.visualstudio.com/docs/copilot/getting-started)**: Discover the key features of Copilot in VS Code.
-* **[Agents Tutorial](https://code.visualstudio.com/docs/copilot/agents/agents-tutorial)**: Get started with autonomous agents across different environments.
-* **[VS Code on YouTube](https://www.youtube.com/@code)**: Watch the latest demos and updates on the VS Code channel.
-* **[Frequently Asked Questions](https://code.visualstudio.com/docs/copilot/faq)**: Get answers to commonly asked questions about Copilot in VS Code.
-* **[Provide Feedback](https://github.com/microsoft/vscode-copilot-release/issues)**: Send us your feedback and feature request to help us make GitHub Copilot better!
-
-## Data and telemetry
-
-The GitHub Copilot Extension for Visual Studio Code collects usage data and sends it to Microsoft to help improve our products and services. Read our [privacy statement](https://privacy.microsoft.com/privacystatement) to learn more. This extension respects the `telemetry.telemetryLevel` setting which you can learn more about at https://code.visualstudio.com/docs/supporting/faq#_how-to-disable-telemetry-reporting.
-
-## Trademarks
-
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow Microsoft's Trademark & Brand Guidelines. Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+원본 VS Code Copilot Chat의 라이선스를 따릅니다. 자세한 내용은 [LICENSE.txt](./LICENSE.txt)를 참조하세요.
