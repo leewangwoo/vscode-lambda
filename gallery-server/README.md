@@ -13,14 +13,14 @@ cd gallery-server
 docker compose up -d --build
 ```
 
-The gallery server will be available at `http://localhost:8080`.
+The gallery server will be available at `http://localhost:8000`.
 
 ### 2. Add Extensions
 
 #### Option A: Upload via HTTP (requires running server)
 
 ```bash
-./scripts/publish.sh ../lambda-chat-deploy/copilot-chat-999.1.0.vsix http://localhost:8080
+./scripts/publish.sh ../lambda-chat-deploy/copilot-chat-999.1.0.vsix http://localhost:8000
 ```
 
 #### Option B: Add to storage directly (no running server needed)
@@ -34,7 +34,7 @@ python scripts/add_extension.py ../lambda-chat-deploy/copilot-chat-999.1.0.vsix 
 On each client machine, run:
 
 ```powershell
-.\configure-vscode.ps1 -GalleryUrl "http://gallery.internal:8080"
+.\configure-vscode.ps1 -GalleryUrl "http://gallery.internal:8000"
 ```
 
 Then restart VS Code.
@@ -95,7 +95,7 @@ npm run build
 vsce package --no-dependencies
 
 # 3. Publish to gallery
-./gallery-server/scripts/publish.sh ./copilot-chat-999.2.0.vsix http://gallery.internal:8080
+./gallery-server/scripts/publish.sh ./copilot-chat-999.2.0.vsix http://gallery.internal:8000
 ```
 
 VS Code clients will automatically detect the new version and prompt for update
@@ -110,7 +110,7 @@ services:
   gallery:
     build: .
     ports:
-      - "8080:8080"
+      - "8000:8000"
     volumes:
       - gallery-data:/data
     environment:
@@ -136,7 +136,7 @@ The `lambda-chat-deploy/install.bat` script handles everything:
 
 ```powershell
 # Configure gallery URL
-.\configure-vscode.ps1 -GalleryUrl "http://gallery.internal:8080"
+.\configure-vscode.ps1 -GalleryUrl "http://gallery.internal:8000"
 
 # Restart VS Code
 ```

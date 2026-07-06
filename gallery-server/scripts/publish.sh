@@ -13,7 +13,7 @@
 set -euo pipefail
 
 VSIX_FILE="${1:?Usage: publish.sh <vsix-file> [gallery-url]}"
-GALLERY_URL="${2:-http://localhost:8080}"
+GALLERY_URL="${2:-http://localhost:8000}"
 
 if [ ! -f "$VSIX_FILE" ]; then
     echo "❌ File not found: $VSIX_FILE"

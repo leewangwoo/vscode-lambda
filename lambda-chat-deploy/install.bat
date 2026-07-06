@@ -13,7 +13,7 @@ if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 :: ============================================================
 :: Configuration - Change this to your gallery server URL
 :: ============================================================
-set "GALLERY_URL=http://100.252.201.200:8080"
+set "GALLERY_URL=http://100.252.201.200:8000"
 
 :: ============================================================
 :: Step 1: Configure VS Code to use private gallery

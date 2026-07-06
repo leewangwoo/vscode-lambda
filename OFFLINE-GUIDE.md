@@ -12,7 +12,7 @@ package management in an airgapped internal network.
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
 │  │ VS Code     │  │ Extension   │  │ devpi       │         │
 │  │ Clients     │  │ Gallery     │  │ PyPI Proxy  │         │
-│  │ (Windows)   │  │ :8080       │  │ :3141       │         │
+│  │ (Windows)   │  │ :8000       │  │ :3141       │         │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
 │         │                │                │                  │
 │         │ Extensions     │ VSIX files     │ Python packages  │
@@ -30,7 +30,7 @@ package management in an airgapped internal network.
 
 | Component | Port | Purpose |
 |-----------|------|---------|
-| Extension Gallery | 8080 | VS Code extensions (search, install, update) |
+| Extension Gallery | 8000 | VS Code extensions (search, install, update) |
 | devpi Server | 3141 | Python packages (pip install) |
 | LiteLLM Proxy | 8088 | LLM models (chat completions) |
 
@@ -46,18 +46,18 @@ discovery, installation, and auto-update.
 ```bash
 cd gallery-server
 docker compose up -d --build
-# Available at http://<server-ip>:8080
+# Available at http://<server-ip>:8000
 ```
 
 ### Add Extensions
 
 ```bash
 # Add Lambda Chat extension
-./gallery-server/scripts/publish.sh copilot-chat-999.1.0.vsix http://<server-ip>:8080
+./gallery-server/scripts/publish.sh copilot-chat-999.1.0.vsix http://<server-ip>:8000
 
 # Download and add common VS Code extensions from marketplace
 # (run from a machine with internet)
-./gallery-server/scripts/fetch-vscode-extensions.sh http://<server-ip>:8080
+./gallery-server/scripts/fetch-vscode-extensions.sh http://<server-ip>:8000
 ```
 
 ### Client Setup
@@ -127,7 +127,7 @@ vsce package --no-dependencies
 ### Publish to Gallery
 
 ```bash
-./gallery-server/scripts/publish.sh copilot-chat-999.1.0.vsix http://<server-ip>:8080
+./gallery-server/scripts/publish.sh copilot-chat-999.1.0.vsix http://<server-ip>:8000
 ```
 
 ### Version Management
@@ -139,7 +139,7 @@ npm version minor  # 999.1.0 → 999.2.0
 # Build and publish
 npm run build
 vsce package --no-dependencies
-./gallery-server/scripts/publish.sh copilot-chat-999.2.0.vsix http://<server-ip>:8080
+./gallery-server/scripts/publish.sh copilot-chat-999.2.0.vsix http://<server-ip>:8000
 
 # Users get automatic update notification in VS Code
 ```

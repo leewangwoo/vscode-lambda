@@ -8,10 +8,10 @@
     discovery, installation, and auto-update from the internal network.
 
 .PARAMETER GalleryUrl
-    The base URL of the private gallery server (e.g., http://gallery.internal:8080)
+    The base URL of the private gallery server (e.g., http://gallery.internal:8000)
 
 .EXAMPLE
-    .\configure-vscode.ps1 -GalleryUrl "http://100.252.201.200:8080"
+    .\configure-vscode.ps1 -GalleryUrl "http://100.252.201.200:8000"
 #>
 
 param(

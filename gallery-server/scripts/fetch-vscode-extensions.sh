@@ -9,11 +9,11 @@
 #   ./fetch-vscode-extensions.sh [gallery-url]
 #
 # Example:
-#   ./fetch-vscode-extensions.sh http://100.252.201.200:8080
+#   ./fetch-vscode-extensions.sh http://100.252.201.200:8000
 
 set -euo pipefail
 
-GALLERY_URL="${1:-http://100.252.201.200:8080}"
+GALLERY_URL="${1:-http://100.252.201.200:8000}"
 TMPDIR="${TMPDIR:-/tmp/vsix-download}"
 
 # Extensions to download (publisher.name)
