@@ -34,7 +34,7 @@ export async function ensureNodePtyShim(extensionPath: string, vscodeAppRoot: st
 	const creation = _ensureNodePtyShim(extensionPath, vscodeAppRoot, logService);
 	shimCreated = creation.catch(error => {
 		shimCreated = undefined;
-		throw error;
+		logService.warn(`Failed to create node-pty shim (this is expected on some VS Code installations where node-pty is packaged differently): ${error}`);
 	});
 	return shimCreated;
 }

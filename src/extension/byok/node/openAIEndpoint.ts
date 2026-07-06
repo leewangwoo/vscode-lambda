@@ -288,7 +288,9 @@ export class OpenAIEndpoint extends ChatEndpoint {
 			}
 			// Removing max tokens defaults to the maximum which is what we want for BYOK
 			delete body.max_tokens;
-			if (!this.useResponsesApi && body.stream) {
+			// CustomOAI/LiteLLM (llama.cpp-backed) servers return an empty response when
+			// `stream_options` is present, so omit it for these endpoints.
+			if (!this.useResponsesApi && body.stream && this.modelMetadata.vendor !== 'CustomOAI') {
 				body['stream_options'] = { 'include_usage': true };
 			}
 		}
@@ -302,10 +304,20 @@ export class OpenAIEndpoint extends ChatEndpoint {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json'
 		};
-		if (this._modelUrl.includes('openai.azure')) {
-			headers['api-key'] = this._apiKey;
+		// Skip Authorization header for placeholder/empty keys (used by keyless LiteLLM deployments)
+		const isPlaceholderKey = !this._apiKey
+			|| this._apiKey === 'none'
+			|| this._apiKey === 'dummy-key'
+			|| this._apiKey === 'mock-offline-token';
+		if (!isPlaceholderKey) {
+			if (this._modelUrl.includes('openai.azure')) {
+				headers['api-key'] = this._apiKey;
+			} else {
+				headers['Authorization'] = `Bearer ${this._apiKey}`;
+			}
 		} else {
-			headers['Authorization'] = `Bearer ${this._apiKey}`;
+			// Use empty string as sentinel to signal: don't add any Authorization header at all
+			headers['Authorization'] = '';
 		}
 		for (const [key, value] of Object.entries(this._customHeaders)) {
 			headers[key] = value;

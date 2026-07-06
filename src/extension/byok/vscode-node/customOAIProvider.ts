@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { workspace } from 'vscode';
 import { Config, ConfigKey, IConfigurationService } from '../../../platform/configuration/common/configurationService';
 import { EndpointEditToolName, ModelSupportedEndpoint } from '../../../platform/endpoint/common/endpointProvider';
 import { IVSCodeExtensionContext } from '../../../platform/extContext/common/extensionContext';
@@ -11,7 +12,7 @@ import { IFetcherService } from '../../../platform/networking/common/fetcherServ
 import { IExperimentationService } from '../../../platform/telemetry/common/nullExperimentationService';
 import { IStringDictionary } from '../../../util/vs/base/common/collections';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
-import { byokKnownModelToAPIInfo, resolveModelInfo } from '../common/byokProvider';
+import { byokKnownModelToAPIInfo, resolveModelInfo, BYOKModelCapabilities } from '../common/byokProvider';
 import { OpenAIEndpoint } from '../node/openAIEndpoint';
 import { AbstractOpenAICompatibleLMProvider, LanguageModelChatConfiguration, OpenAICompatibleLanguageModelChatInformation } from './abstractLanguageModelChatProvider';
 import { IBYOKStorageService } from './byokStorageService';
@@ -114,7 +115,7 @@ export abstract class AbstractCustomOAIBYOKModelProvider extends AbstractOpenAIC
 	}
 
 	protected override async getAllModels(silent: boolean, apiKey: string | undefined, configuration: CustomOAIModelProviderConfig | undefined): Promise<OpenAICompatibleLanguageModelChatInformation<CustomOAIModelProviderConfig>[]> {
-		if (configuration?.url) {
+		if (this.getModelsBaseUrl(configuration)) {
 			return super.getAllModels(silent, apiKey, configuration);
 		}
 		const models: OpenAICompatibleLanguageModelChatInformation<CustomOAIModelProviderConfig>[] = [];
@@ -154,8 +155,19 @@ export abstract class AbstractCustomOAIBYOKModelProvider extends AbstractOpenAIC
 		return this._instantiationService.createInstance(OpenAIEndpoint, modelInfo, model.configuration?.apiKey ?? '', url);
 	}
 
+	protected override resolveModelCapabilities(modelData: unknown): BYOKModelCapabilities | undefined {
+		const model = modelData as { id: string; name?: string };
+		return {
+			name: model.name || model.id,
+			toolCalling: true,
+			vision: false,
+			maxInputTokens: 128000,
+			maxOutputTokens: 4096
+		};
+	}
+
 	protected getModelsBaseUrl(configuration: CustomOAIModelProviderConfig | undefined): string | undefined {
-		return configuration?.url;
+		return configuration?.url || workspace.getConfiguration('github.copilot.chat.byok.customoai').get<string>('url');
 	}
 
 	protected abstract resolveUrl(modelId: string, url: string): string;

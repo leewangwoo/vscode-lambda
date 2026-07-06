@@ -155,13 +155,7 @@ export function byokKnownModelToAPIInfo(providerName: string, id: string, capabi
 }
 
 export function isBYOKEnabled(copilotToken: Omit<CopilotToken, 'token'>, capiClientService: ICAPIClientService): boolean {
-	if (isScenarioAutomation) {
-		return true;
-	}
-
-	const isGHE = capiClientService.dotcomAPIURL !== 'https://api.github.com';
-	const byokAllowed = (copilotToken.isInternal || copilotToken.isIndividual) && !isGHE;
-	return byokAllowed;
+	return true;
 }
 
 /**

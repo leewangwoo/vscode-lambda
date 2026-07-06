@@ -38,11 +38,13 @@ import { Disposable, MutableDisposable } from '../../../util/vs/base/common/life
 import { isBoolean, isDefined, isNumber, isString, isStringArray } from '../../../util/vs/base/common/types';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { ChatLocation as ApiChatLocation, ExtensionMode } from '../../../vscodeTypes';
-import type { LMResponsePart } from '../../byok/common/byokProvider';
+import { type LMResponsePart, resolveModelInfo } from '../../byok/common/byokProvider';
 import { IExtensionContribution } from '../../common/contributions';
 import { PromptRenderer } from '../../prompts/node/base/promptRenderer';
 import { isImageDataPart } from '../common/languageModelChatMessageHelpers';
 import { LanguageModelAccessPrompt } from './languageModelAccessPrompt';
+import { IFetcherService } from '../../../platform/networking/common/fetcherService';
+import { OpenAIEndpoint } from '../../byok/node/openAIEndpoint';
 
 /**
  * Builds a configurationSchema for the model picker based on the endpoint's supported capabilities.
@@ -170,6 +172,7 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 	private _chatEndpoints: IChatEndpoint[] = [];
 	private _lmWrapper: CopilotLanguageModelWrapper;
 	private _promptBaseCountCache: LanguageModelAccessPromptBaseCountCache;
+	private readonly _customOaiEndpoints: Map<string, IChatEndpoint> = new Map();
 
 	constructor(
 		@ILogService private readonly _logService: ILogService,
@@ -180,6 +183,7 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 		@IVSCodeExtensionContext private readonly _vsCodeExtensionContext: IVSCodeExtensionContext,
 		@IAutomodeService private readonly _automodeService: IAutomodeService,
 		@IExperimentationService private readonly _expService: IExperimentationService,
+		@IFetcherService private readonly _fetcherService: IFetcherService,
 	) {
 		super();
 
@@ -228,143 +232,223 @@ export class LanguageModelAccess extends Disposable implements IExtensionContrib
 	}
 
 	private async _provideLanguageModelChatInfo(options: { silent: boolean }, token: vscode.CancellationToken): Promise<vscode.LanguageModelChatInformation[]> {
-		const session = await this._getToken();
-		if (!session) {
-			// Return cached models until we have auth reacquired
-			// We clear this list in onDidAuthenticationChange so signed out should still have model picker clear
-			return this._currentModels;
-		}
-
-		const models: vscode.LanguageModelChatInformation[] = [];
-		const allEndpoints = await this._endpointProvider.getAllChatEndpoints();
-		const chatEndpoints = allEndpoints.filter(e => e.showInModelPicker || e.model === 'gpt-4o-mini');
-		const autoEndpoint = await this._automodeService.resolveAutoModeEndpoint(undefined, allEndpoints);
-		chatEndpoints.push(autoEndpoint);
-		let defaultChatEndpoint: IChatEndpoint;
-		const defaultExpModel = this._expService.getTreatmentVariable<string>('chat.defaultLanguageModel')?.replace('copilot/', '');
-		if (this._authenticationService.copilotToken?.isNoAuthUser || !defaultExpModel || defaultExpModel === AutoChatEndpoint.pseudoModelId) {
-			// No auth, no experiment, and exp that sets auto to default all get default model
-			defaultChatEndpoint = autoEndpoint;
-		} else {
-			// Find exp default
-			defaultChatEndpoint = chatEndpoints.find(e => e.model === defaultExpModel) || autoEndpoint;
-		}
-
-		const seenFamilies = new Set<string>();
-
-		for (const endpoint of chatEndpoints) {
-			if (seenFamilies.has(endpoint.family) && !endpoint.showInModelPicker) {
-				continue;
-			}
-			seenFamilies.add(endpoint.family);
-
-			const sanitizedModelName = endpoint.name.replace(/\(Preview\)/g, '').trim();
-			let modelTooltip: string | undefined;
-			if (endpoint.degradationReason) {
-				modelTooltip = endpoint.degradationReason;
-			} else if (endpoint instanceof AutoChatEndpoint) {
-				if (this._authenticationService.copilotToken?.isNoAuthUser || (endpoint.discountRange.low === 0 && endpoint.discountRange.high === 0)) {
-					modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance.');
-				} else if (endpoint.discountRange.low === endpoint.discountRange.high) {
-					modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance. Auto is given a {0}% discount.', endpoint.discountRange.low * 100);
-				} else {
-					modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance. Auto is given a {0}% to {1}% discount.', endpoint.discountRange.low * 100, endpoint.discountRange.high * 100);
+		const customOaiConfig = vscode.workspace.getConfiguration('github.copilot.chat.byok.customoai');
+		const customUrl = customOaiConfig.get<string>('url');
+		if (customUrl) {
+			try {
+				const customKey = customOaiConfig.get<string>('key') || 'dummy-key';
+				const modelsEndpoint = customUrl.endsWith('/models') ? customUrl : `${customUrl.endsWith('/') ? customUrl : `${customUrl}/`}models`;
+				const headers: Record<string, string> = {
+					'Content-Type': 'application/json',
+				};
+				if (customKey) {
+					headers['Authorization'] = `Bearer ${customKey}`;
 				}
-			} else {
-				modelTooltip = getModelCapabilitiesDescription(endpoint);
-			}
-
-			let modelCategory: { label: string; order: number } | undefined;
-			if (endpoint instanceof AutoChatEndpoint) {
-				modelCategory = { label: '', order: Number.MIN_SAFE_INTEGER };
-			} else if (endpoint.isPremium === undefined || this._authenticationService.copilotToken?.isFreeUser) {
-				modelCategory = { label: vscode.l10n.t("Copilot Models"), order: 0 };
-			} else if (endpoint.isPremium) {
-				modelCategory = { label: vscode.l10n.t("Premium Models"), order: 1 };
-			} else {
-				modelCategory = { label: vscode.l10n.t("Standard Models"), order: 0 };
-			}
-
-			// Counting tokens requires instantiating the tokenizers, which makes this process use a lot of memory.
-			// Let's cache the results across extension activations
-			const baseCount = await this._promptBaseCountCache.getBaseCount(endpoint);
-			const multiplier = endpoint.multiplier !== undefined ? `${endpoint.multiplier}x` : undefined;
-			let modelDetail: string | undefined;
-
-			// Append rate info to tooltip for all non-Auto models with a multiplier
-			if (endpoint.multiplier !== undefined && !(endpoint instanceof AutoChatEndpoint)) {
-				if (modelTooltip) {
-					modelTooltip = vscode.l10n.t('{0} Rate is counted at {1}x.', modelTooltip, endpoint.multiplier);
-				} else {
-					modelTooltip = vscode.l10n.t('Rate is counted at {0}x.', endpoint.multiplier);
-				}
-			}
-
-			if (endpoint instanceof AutoChatEndpoint) {
-				if (endpoint.discountRange.high === endpoint.discountRange.low && endpoint.discountRange.low !== 0) {
-					modelDetail = `${endpoint.discountRange.low * 100}% discount`;
-				} else if (endpoint.discountRange.high !== endpoint.discountRange.low) {
-					modelDetail = `${endpoint.discountRange.low * 100}% to ${endpoint.discountRange.high * 100}% discount`;
-				}
-			}
-			if (endpoint.customModel) {
-				const customModel = endpoint.customModel;
-				modelDetail = customModel.owner_name;
-				modelTooltip = vscode.l10n.t('{0} is contributed by {1} using {2}.', sanitizedModelName, customModel.owner_name, customModel.key_name);
-				modelCategory = { label: vscode.l10n.t("Custom Models"), order: 2 };
-			}
-
-			const session = this._authenticationService.anyGitHubSession;
-			const isDefault = endpoint === defaultChatEndpoint;
-
-			const model: vscode.LanguageModelChatInformation = {
-				id: endpoint instanceof AutoChatEndpoint ? AutoChatEndpoint.pseudoModelId : endpoint.model,
-				name: endpoint instanceof AutoChatEndpoint ? 'Auto' : endpoint.name,
-				family: endpoint.family,
-				tooltip: modelTooltip,
-				multiplier: endpoint instanceof AutoChatEndpoint ? modelDetail : multiplier,
-				multiplierNumeric: endpoint instanceof AutoChatEndpoint ? undefined : endpoint.multiplier,
-				detail: modelDetail,
-				category: modelCategory,
-				statusIcon: endpoint.degradationReason ? new vscode.ThemeIcon('warning') : undefined,
-				version: endpoint.version,
-				maxInputTokens: endpoint.modelMaxPromptTokens - baseCount - BaseTokensPerCompletion,
-				maxOutputTokens: endpoint.maxOutputTokens,
-				requiresAuthorization: session && { label: session.account.label },
-				isDefault: {
-					[ApiChatLocation.Panel]: isDefault,
-					[ApiChatLocation.Terminal]: isDefault,
-					[ApiChatLocation.Notebook]: isDefault,
-					[ApiChatLocation.Editor]: endpoint instanceof AutoChatEndpoint, // inline chat gets 'Auto' by default
-				},
-				isUserSelectable: endpoint.showInModelPicker,
-				capabilities: {
-					imageInput: endpoint instanceof AutoChatEndpoint ? true : endpoint.supportsVision,
-					toolCalling: endpoint.supportsToolCalls,
-				},
-				...buildConfigurationSchema(endpoint),
-			};
-
-			models.push(model);
-
-			// Register aliases for this model
-			const aliases = ModelAliasRegistry.getAliases(model.id);
-			for (const alias of aliases) {
-				models.push({
-					...model,
-					id: alias,
-					family: alias,
-					isUserSelectable: false,
+				const response = await this._fetcherService.fetch(modelsEndpoint, {
+					method: 'GET',
+					headers,
+					callSite: 'byok-models-discovery',
 				});
+				const data = await response.json();
+				const fetchedModels = data.data ?? data.models;
+				if (fetchedModels && Array.isArray(fetchedModels)) {
+					const models: vscode.LanguageModelChatInformation[] = [];
+					this._customOaiEndpoints.clear();
+					fetchedModels.forEach((m: { id: string; name?: string }, idx: number) => {
+						const modelInfo = resolveModelInfo(m.id, 'CustomOAI', undefined, {
+							name: m.name || m.id,
+							maxInputTokens: 128000,
+							maxOutputTokens: 4096,
+							toolCalling: true,
+							vision: false
+						});
+						// Build the correct chat completions URL (e.g. http://host:port/v1/chat/completions)
+						const baseUrl = customUrl.endsWith('/models') ? customUrl.substring(0, customUrl.lastIndexOf('/models')) : customUrl;
+						const endpoint = this._instantiationService.createInstance(OpenAIEndpoint, modelInfo, customKey, baseUrl);
+						this._customOaiEndpoints.set(m.id, endpoint);
+
+						const isDefault = idx === 0;
+						models.push({
+							id: m.id,
+							name: m.name || m.id,
+							family: m.id,
+							tooltip: `${m.name || m.id} (Custom OAI)`,
+							multiplier: undefined,
+							multiplierNumeric: undefined,
+							detail: 'Custom OAI',
+							category: { label: vscode.l10n.t("Custom Models"), order: 2 },
+							statusIcon: undefined,
+							version: '1.0.0',
+							maxInputTokens: 128000,
+							maxOutputTokens: 4096,
+							requiresAuthorization: undefined,
+							isDefault: {
+								[ApiChatLocation.Panel]: isDefault,
+								[ApiChatLocation.Terminal]: isDefault,
+								[ApiChatLocation.Notebook]: isDefault,
+								[ApiChatLocation.Editor]: isDefault,
+							},
+							isUserSelectable: true,
+							capabilities: {
+								imageInput: false,
+								toolCalling: true,
+							},
+						});
+					});
+					this._currentModels = models;
+					return models;
+				}
+			} catch (err) {
+				this._logService.error(err, 'Failed to fetch Custom OAI models in LanguageModelAccess');
 			}
 		}
 
-		this._currentModels = models;
-		this._chatEndpoints = chatEndpoints;
-		return models;
+		try {
+			const session = await this._getToken();
+			if (!session) {
+				// Return cached models until we have auth reacquired
+				// We clear this list in onDidAuthenticationChange so signed out should still have model picker clear
+				return this._currentModels;
+			}
+
+			const models: vscode.LanguageModelChatInformation[] = [];
+			const allEndpoints = await this._endpointProvider.getAllChatEndpoints();
+			const chatEndpoints = allEndpoints.filter(e => e.showInModelPicker || e.model === 'gpt-4o-mini');
+			const autoEndpoint = await this._automodeService.resolveAutoModeEndpoint(undefined, allEndpoints);
+			chatEndpoints.push(autoEndpoint);
+			let defaultChatEndpoint: IChatEndpoint;
+			const defaultExpModel = this._expService.getTreatmentVariable<string>('chat.defaultLanguageModel')?.replace('copilot/', '');
+			if (this._authenticationService.copilotToken?.isNoAuthUser || !defaultExpModel || defaultExpModel === AutoChatEndpoint.pseudoModelId) {
+				// No auth, no experiment, and exp that sets auto to default all get default model
+				defaultChatEndpoint = autoEndpoint;
+			} else {
+				// Find exp default
+				defaultChatEndpoint = chatEndpoints.find(e => e.model === defaultExpModel) || autoEndpoint;
+			}
+
+			const seenFamilies = new Set<string>();
+
+			for (const endpoint of chatEndpoints) {
+				if (seenFamilies.has(endpoint.family) && !endpoint.showInModelPicker) {
+					continue;
+				}
+				seenFamilies.add(endpoint.family);
+
+				const sanitizedModelName = endpoint.name.replace(/\(Preview\)/g, '').trim();
+				let modelTooltip: string | undefined;
+				if (endpoint.degradationReason) {
+					modelTooltip = endpoint.degradationReason;
+				} else if (endpoint instanceof AutoChatEndpoint) {
+					if (this._authenticationService.copilotToken?.isNoAuthUser || (endpoint.discountRange.low === 0 && endpoint.discountRange.high === 0)) {
+						modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance.');
+					} else if (endpoint.discountRange.low === endpoint.discountRange.high) {
+						modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance. Auto is given a {0}% discount.', endpoint.discountRange.low * 100);
+					} else {
+						modelTooltip = vscode.l10n.t('Auto selects the best model for your request based on capacity and performance. Auto is given a {0}% to {1}% discount.', endpoint.discountRange.low * 100, endpoint.discountRange.high * 100);
+					}
+				} else {
+					modelTooltip = getModelCapabilitiesDescription(endpoint);
+				}
+
+				let modelCategory: { label: string; order: number } | undefined;
+				if (endpoint instanceof AutoChatEndpoint) {
+					modelCategory = { label: '', order: Number.MIN_SAFE_INTEGER };
+				} else if (endpoint.isPremium === undefined || this._authenticationService.copilotToken?.isFreeUser) {
+					modelCategory = { label: vscode.l10n.t("Copilot Models"), order: 0 };
+				} else if (endpoint.isPremium) {
+					modelCategory = { label: vscode.l10n.t("Premium Models"), order: 1 };
+				} else {
+					modelCategory = { label: vscode.l10n.t("Standard Models"), order: 0 };
+				}
+
+				// Counting tokens requires instantiating the tokenizers, which makes this process use a lot of memory.
+				// Let's cache the results across extension activations
+				const baseCount = await this._promptBaseCountCache.getBaseCount(endpoint);
+				const multiplier = endpoint.multiplier !== undefined ? `${endpoint.multiplier}x` : undefined;
+				let modelDetail: string | undefined;
+
+				// Append rate info to tooltip for all non-Auto models with a multiplier
+				if (endpoint.multiplier !== undefined && !(endpoint instanceof AutoChatEndpoint)) {
+					if (modelTooltip) {
+						modelTooltip = vscode.l10n.t('{0} Rate is counted at {1}x.', modelTooltip, endpoint.multiplier);
+					} else {
+						modelTooltip = vscode.l10n.t('Rate is counted at {0}x.', endpoint.multiplier);
+					}
+				}
+
+				if (endpoint instanceof AutoChatEndpoint) {
+					if (endpoint.discountRange.high === endpoint.discountRange.low && endpoint.discountRange.low !== 0) {
+						modelDetail = `${endpoint.discountRange.low * 100}% discount`;
+					} else if (endpoint.discountRange.high !== endpoint.discountRange.low) {
+						modelDetail = `${endpoint.discountRange.low * 100}% to ${endpoint.discountRange.high * 100}% discount`;
+					}
+				}
+				if (endpoint.customModel) {
+					const customModel = endpoint.customModel;
+					modelDetail = customModel.owner_name;
+					modelTooltip = vscode.l10n.t('{0} is contributed by {1} using {2}.', sanitizedModelName, customModel.owner_name, customModel.key_name);
+					modelCategory = { label: vscode.l10n.t("Custom Models"), order: 2 };
+				}
+
+				const session = this._authenticationService.anyGitHubSession;
+				const isDefault = endpoint === defaultChatEndpoint;
+
+				const model: vscode.LanguageModelChatInformation = {
+					id: endpoint instanceof AutoChatEndpoint ? AutoChatEndpoint.pseudoModelId : endpoint.model,
+					name: endpoint instanceof AutoChatEndpoint ? 'Auto' : endpoint.name,
+					family: endpoint.family,
+					tooltip: modelTooltip,
+					multiplier: endpoint instanceof AutoChatEndpoint ? modelDetail : multiplier,
+					multiplierNumeric: endpoint instanceof AutoChatEndpoint ? undefined : endpoint.multiplier,
+					detail: modelDetail,
+					category: modelCategory,
+					statusIcon: endpoint.degradationReason ? new vscode.ThemeIcon('warning') : undefined,
+					version: endpoint.version,
+					maxInputTokens: endpoint.modelMaxPromptTokens - baseCount - BaseTokensPerCompletion,
+					maxOutputTokens: endpoint.maxOutputTokens,
+					requiresAuthorization: session && { label: session.account.label },
+					isDefault: {
+						[ApiChatLocation.Panel]: isDefault,
+						[ApiChatLocation.Terminal]: isDefault,
+						[ApiChatLocation.Notebook]: isDefault,
+						[ApiChatLocation.Editor]: endpoint instanceof AutoChatEndpoint, // inline chat gets 'Auto' by default
+					},
+					isUserSelectable: endpoint.showInModelPicker,
+					capabilities: {
+						imageInput: endpoint instanceof AutoChatEndpoint ? true : endpoint.supportsVision,
+						toolCalling: endpoint.supportsToolCalls,
+					},
+					...buildConfigurationSchema(endpoint),
+				};
+
+				models.push(model);
+
+				// Register aliases for this model
+				const aliases = ModelAliasRegistry.getAliases(model.id);
+				for (const alias of aliases) {
+					models.push({
+						...model,
+						id: alias,
+						family: alias,
+						isUserSelectable: false,
+					});
+				}
+			}
+
+			this._currentModels = models;
+			this._chatEndpoints = chatEndpoints;
+			return models;
+		} catch (error) {
+			this._logService.warn(`LanguageModelAccess failed to retrieve copilot models (offline): ${error}`);
+			return [];
+		}
 	}
 
 	private async _getEndpointForModel(model: vscode.LanguageModelChatInformation) {
+		const customEndpoint = this._customOaiEndpoints.get(model.id);
+		if (customEndpoint) {
+			return customEndpoint;
+		}
 		if (model.id === AutoChatEndpoint.pseudoModelId) {
 			const allEndpoints = await this._endpointProvider.getAllChatEndpoints();
 			return await this._automodeService.resolveAutoModeEndpoint(undefined, allEndpoints);

@@ -28,9 +28,11 @@ export class ChatCustomAgentsService extends Disposable implements IChatCustomAg
 	) {
 		super();
 
-		this._register(vscode.chat.onDidChangeCustomAgents(() => {
-			this.triggerRefreshCustomAgents();
-		}));
+		if (vscode.chat.onDidChangeCustomAgents) {
+			this._register(vscode.chat.onDidChangeCustomAgents(() => {
+				this.triggerRefreshCustomAgents();
+			}));
+		}
 
 		this.triggerRefreshCustomAgents();
 	}
@@ -59,6 +61,11 @@ export class ChatCustomAgentsService extends Disposable implements IChatCustomAg
 	}
 
 	private async refreshCustomAgents(token: CancellationToken): Promise<void> {
+		if (!vscode.chat.customAgents) {
+			this.customAgents = [];
+			return;
+		}
+
 		const parsedAgents = coalesce(await Promise.all(vscode.chat.customAgents.map(async resource => {
 			try {
 				return await this.promptsService.parseFile(resource.uri, token);

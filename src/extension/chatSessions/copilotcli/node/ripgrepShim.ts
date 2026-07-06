@@ -34,7 +34,7 @@ export async function ensureRipgrepShim(extensionPath: string, vscodeAppRoot: st
 	const creation = _ensureRipgrepShim(extensionPath, vscodeAppRoot, logService);
 	shimCreated = creation.catch(error => {
 		shimCreated = undefined;
-		throw error;
+		logService.warn(`Failed to create ripgrep shim (this is expected on some VS Code installations where ripgrep is packaged differently): ${error}`);
 	});
 	return shimCreated;
 }

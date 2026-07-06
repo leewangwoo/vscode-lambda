@@ -63,22 +63,28 @@ export class BYOKContrib extends Disposable implements IExtensionContribution {
 			this._providers.set(CustomOAIBYOKModelProvider.providerName.toLowerCase(), instantiationService.createInstance(CustomOAIBYOKModelProvider, this._byokStorageService));
 
 			for (const [providerName, provider] of this._providers) {
-				this._store.add(lm.registerLanguageModelChatProvider(providerName, provider));
+				const regName = providerName === 'customoai' ? 'copilot' : providerName;
+				this._store.add(lm.registerLanguageModelChatProvider(regName, provider));
 			}
 		}
 	}
 	private async fetchKnownModelList(fetcherService: IFetcherService): Promise<Record<string, BYOKKnownModels>> {
-		const data = await (await fetcherService.fetch('https://main.vscode-cdn.net/extensions/copilotChat.json', { method: 'GET', callSite: 'byok-known-models' })).json();
-		// Use this for testing with changes from a local file. Don't check in
-		// const data = JSON.parse((await this._fileSystemService.readFile(URI.file('/Users/roblou/code/vscode-engineering/chat/copilotChat.json'))).toString());
-		let knownModels: Record<string, BYOKKnownModels>;
-		if (data.version !== 1) {
-			this._logService.warn('BYOK: Copilot Chat known models list is not in the expected format. Defaulting to empty list.');
-			knownModels = {};
-		} else {
-			knownModels = data.modelInfo;
+		try {
+			const data = await (await fetcherService.fetch('https://main.vscode-cdn.net/extensions/copilotChat.json', { method: 'GET', callSite: 'byok-known-models' })).json();
+			// Use this for testing with changes from a local file. Don't check in
+			// const data = JSON.parse((await this._fileSystemService.readFile(URI.file('/Users/roblou/code/vscode-engineering/chat/copilotChat.json'))).toString());
+			let knownModels: Record<string, BYOKKnownModels>;
+			if (data.version !== 1) {
+				this._logService.warn('BYOK: Copilot Chat known models list is not in the expected format. Defaulting to empty list.');
+				knownModels = {};
+			} else {
+				knownModels = data.modelInfo;
+			}
+			this._logService.info('BYOK: Copilot Chat known models list fetched successfully.');
+			return knownModels;
+		} catch (error) {
+			this._logService.error(error, 'BYOK: failed to fetch known models list from CDN');
+			return {};
 		}
-		this._logService.info('BYOK: Copilot Chat known models list fetched successfully.');
-		return knownModels;
 	}
 }

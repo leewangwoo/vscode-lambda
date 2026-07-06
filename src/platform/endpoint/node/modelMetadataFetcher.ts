@@ -4,12 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { RequestMetadata, RequestType } from '@vscode/copilot-api';
-import type { LanguageModelChat } from 'vscode';
+// eslint-disable-next-line local/no-runtime-import
+import * as vscode from 'vscode';
 import { TaskSingler } from '../../../util/common/taskSingler';
 import { Emitter, Event } from '../../../util/vs/base/common/event';
 import { Disposable } from '../../../util/vs/base/common/lifecycle';
 import { generateUuid } from '../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
+// eslint-disable-next-line import/no-restricted-paths
+import { resolveModelInfo } from '../../../extension/byok/common/byokProvider';
 
 import { IAuthenticationService } from '../../authentication/common/authentication';
 import { ConfigKey, IConfigurationService } from '../../configuration/common/configurationService';
@@ -230,6 +233,58 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 			return;
 		}
 		const requestStartTime = Date.now();
+
+		const customOaiConfig = vscode.workspace.getConfiguration('github.copilot.chat.byok.customoai');
+		const customUrl = customOaiConfig.get<string>('url');
+		if (customUrl) {
+			try {
+				const customKey = customOaiConfig.get<string>('key') || 'dummy-key';
+				const modelsEndpoint = customUrl.endsWith('/models') ? customUrl : `${customUrl.endsWith('/') ? customUrl : `${customUrl}/`}models`;
+				const headers: Record<string, string> = {
+					'Content-Type': 'application/json',
+				};
+				if (customKey) {
+					headers['Authorization'] = `Bearer ${customKey}`;
+				}
+				const response = await globalThis.fetch(modelsEndpoint, {
+					method: 'GET',
+					headers,
+				});
+				const data = await response.json();
+				const fetchedModels = data.data ?? data.models;
+				if (fetchedModels && Array.isArray(fetchedModels)) {
+					this._familyMap.clear();
+					this._copilotBaseModel = undefined;
+					fetchedModels.forEach((m: any, idx: number) => {
+						const modelInfo = resolveModelInfo(m.id, 'CustomOAI', undefined, {
+							name: m.name || m.id,
+							maxInputTokens: 128000,
+							maxOutputTokens: 4096,
+							toolCalling: true,
+							vision: false
+						}) as IModelAPIResponse;
+
+						if (idx === 0) {
+							modelInfo.is_chat_fallback = true;
+							this._copilotBaseModel = modelInfo;
+						}
+
+						const family = modelInfo.capabilities.family;
+						if (!this._familyMap.has(family)) {
+							this._familyMap.set(family, []);
+						}
+						this._familyMap.get(family)?.push(modelInfo);
+					});
+					this._lastFetchTime = Date.now();
+					this._lastFetchError = undefined;
+					this._onDidModelRefresh.fire();
+					this._logService.info(`Fetched Custom OAI model metadata in ${Date.now() - requestStartTime}ms`);
+					return;
+				}
+			} catch (err) {
+				this._logService.error(err, 'Failed to fetch Custom OAI models in ModelMetadataFetcher');
+			}
+		}
 
 		const copilotToken = (await this._authService.getCopilotToken()).token;
 		const requestId = generateUuid();

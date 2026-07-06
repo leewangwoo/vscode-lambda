@@ -379,13 +379,24 @@ function networkRequest(
 			intent === 'conversation-agent' ? intent :
 				intent;
 
+	const rawExtraHeaders = endpoint.getExtraHeaders ? endpoint.getExtraHeaders(location) : {};
+	// Track if endpoint explicitly set Authorization (even empty string = suppress default)
+	const endpointHasAuth = 'Authorization' in rawExtraHeaders;
+	// Build cleaned extra headers (strip empty-string sentinels so they don't go on the wire)
+	const extraHeaders: Record<string, string> = {};
+	for (const [key, value] of Object.entries(rawExtraHeaders)) {
+		if (value !== '') {
+			extraHeaders[key] = value;
+		}
+	}
 	const headers: ReqHeaders = {
-		Authorization: `Bearer ${secretKey}`,
+		// Only inject default copilot Authorization if the endpoint doesn't manage auth itself
+		...(!endpointHasAuth ? { Authorization: `Bearer ${secretKey}` } : {}),
 		'X-Request-Id': requestId,
 		'OpenAI-Intent': intent, // Tells CAPI who flighted this request. Helps find buggy features
 		'X-GitHub-Api-Version': '2025-05-01',
 		...additionalHeaders,
-		...(endpoint.getExtraHeaders ? endpoint.getExtraHeaders(location) : {}),
+		...extraHeaders,
 	};
 	headers['X-Interaction-Type'] = agentInteractionType;
 	headers['X-Agent-Task-Id'] = requestId;

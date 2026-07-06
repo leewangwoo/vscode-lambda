@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { LanguageModelChat, type ChatRequest } from 'vscode';
+import { LanguageModelChat, type ChatRequest, workspace } from 'vscode';
 import { IAuthenticationService } from '../../../platform/authentication/common/authentication';
 import { IConfigurationService } from '../../../platform/configuration/common/configurationService';
 import { ChatEndpointFamily, EmbeddingsEndpointFamily, IChatModelInformation, ICompletionModelInformation, IEmbeddingModelInformation, IEndpointProvider } from '../../../platform/endpoint/common/endpointProvider';
@@ -18,6 +18,8 @@ import { IChatEndpoint, IEmbeddingsEndpoint } from '../../../platform/networking
 import { Emitter, Event } from '../../../util/vs/base/common/event';
 import { Disposable } from '../../../util/vs/base/common/lifecycle';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
+import { OpenAIEndpoint } from '../../byok/node/openAIEndpoint';
+import { resolveCustomOAIUrl } from '../../byok/vscode-node/customOAIProvider';
 
 
 export class ProductionEndpointProvider extends Disposable implements IEndpointProvider {
@@ -56,6 +58,20 @@ export class ProductionEndpointProvider extends Disposable implements IEndpointP
 		const modelId = modelMetadata.id;
 		let chatEndpoint = this._chatEndpoints.get(modelId);
 		if (!chatEndpoint) {
+			// For CustomOAI models (from LiteLLM), route directly to the local endpoint instead of GitHub/CAPI.
+			// The chat panel dispatches through getChatEndpoint (not the vscode.lm provider path), so without
+			// this branch these models fall back to CopilotChatEndpoint and requests go to GitHub.
+			if (modelMetadata.vendor === 'CustomOAI') {
+				const customOaiConfig = workspace.getConfiguration('github.copilot.chat.byok.customoai');
+				const customUrl = customOaiConfig.get<string>('url');
+				if (customUrl) {
+					const customKey = customOaiConfig.get<string>('key') || 'dummy-key';
+					const chatUrl = resolveCustomOAIUrl(modelId, customUrl);
+					chatEndpoint = this._instantiationService.createInstance(OpenAIEndpoint, modelMetadata, customKey, chatUrl);
+					this._chatEndpoints.set(modelId, chatEndpoint);
+					return chatEndpoint;
+				}
+			}
 			chatEndpoint = this._instantiationService.createInstance(CopilotChatEndpoint, modelMetadata);
 			this._chatEndpoints.set(modelId, chatEndpoint);
 		}

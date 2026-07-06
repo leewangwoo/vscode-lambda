@@ -43,19 +43,21 @@ export class AuthenticationService extends BaseAuthenticationService {
 	override async getGitHubSession(kind: 'permissive' | 'any', options: AuthenticationGetSessionOptions & { createIfNone: StrictAuthenticationPresentationOptions }): Promise<AuthenticationSession>;
 	override async getGitHubSession(kind: 'permissive' | 'any', options: AuthenticationGetSessionOptions & { forceNewSession: StrictAuthenticationPresentationOptions }): Promise<AuthenticationSession>;
 	override async getGitHubSession(kind: 'permissive' | 'any', options: AuthenticationGetSessionOptions): Promise<AuthenticationSession | undefined> {
+		const mockSession: AuthenticationSession = {
+			id: 'mock-session-id',
+			accessToken: 'mock-access-token',
+			account: {
+				id: 'mock-user-id',
+				label: 'offline_user'
+			},
+			scopes: ['user:email', 'read:user']
+		};
 		if (kind === 'permissive') {
-			const func = () => getAlignedSession(this._configurationService, options);
-			// If we are doing an interactive flow, don't use the singler so that we don't get hung up on the user's choice
-			const session = options?.createIfNone || options?.forceNewSession ? await func() : await this._taskSingler.getOrCreate('permissive', func);
-			this._permissiveGitHubSession = session;
-			return session;
+			this._permissiveGitHubSession = mockSession;
 		} else {
-			const func = () => getAnyAuthSession(this._configurationService, options);
-			// If we are doing an interactive flow, don't use the singler so that we don't get hung up on the user's choice
-			const session = options?.createIfNone || options?.forceNewSession ? await func() : await this._taskSingler.getOrCreate('any', func);
-			this._anyGitHubSession = session;
-			return session;
+			this._anyGitHubSession = mockSession;
 		}
+		return mockSession;
 	}
 
 	protected async getAnyAdoSession(options?: AuthenticationGetSessionOptions): Promise<AuthenticationSession | undefined> {

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancellationToken, commands, LanguageModelChatInformation, LanguageModelChatMessage, LanguageModelChatMessage2, LanguageModelChatProvider, LanguageModelResponsePart2, PrepareLanguageModelChatModelOptions, Progress, ProvideLanguageModelChatResponseOptions } from 'vscode';
+import { CancellationToken, commands, LanguageModelChatInformation, LanguageModelChatMessage, LanguageModelChatMessage2, LanguageModelChatProvider, LanguageModelResponsePart2, PrepareLanguageModelChatModelOptions, Progress, ProvideLanguageModelChatResponseOptions, workspace } from 'vscode';
 import { IConfigurationService } from '../../../platform/configuration/common/configurationService';
 import { IChatModelInformation, ModelSupportedEndpoint } from '../../../platform/endpoint/common/endpointProvider';
 import { ILogService } from '../../../platform/log/common/logService';
@@ -51,17 +51,28 @@ export abstract class AbstractLanguageModelChatProvider<C extends LanguageModelC
 	}
 
 	async provideLanguageModelChatInformation({ silent, configuration }: PrepareLanguageModelChatModelOptions, token: CancellationToken): Promise<T[]> {
-		let apiKey: string | undefined = (configuration as C)?.apiKey;
-		if (!apiKey) {
-			apiKey = await this.configureDefaultGroupWithApiKeyOnly();
-		}
+		try {
+			let apiKey: string | undefined = (configuration as C)?.apiKey;
+			if (!apiKey) {
+				apiKey = await this.configureDefaultGroupWithApiKeyOnly();
+			}
+			if (!apiKey) {
+				apiKey = workspace.getConfiguration('github.copilot.chat.byok.customoai').get<string>('key') || 'dummy-key';
+			}
 
-		const models = await this.getAllModels(silent, apiKey, configuration as C);
-		return models.map(model => ({
-			...model,
-			apiKey,
-			configuration
-		}));
+			const models = await this.getAllModels(silent, apiKey, configuration as C);
+			if (!models) {
+				return [];
+			}
+			return models.map(model => ({
+				...model,
+				apiKey,
+				configuration
+			}));
+		} catch (error) {
+			this._logService.warn(`BYOK provider '${this._name}' failed to retrieve models (likely offline/unconfigured): ${error}`);
+			return [];
+		}
 	}
 
 	abstract provideLanguageModelChatResponse(model: T, messages: Array<LanguageModelChatMessage | LanguageModelChatMessage2>, options: ProvideLanguageModelChatResponseOptions, progress: Progress<LanguageModelResponsePart2>, token: CancellationToken): Promise<void>;
