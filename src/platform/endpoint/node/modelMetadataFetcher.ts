@@ -169,6 +169,12 @@ export class ModelMetadataFetcher extends Disposable implements IModelMetadataFe
 		} else {
 			resolvedModel = this._familyMap.get(family)?.[0];
 		}
+		// Offline/CustomOAI fallback: when only local LiteLLM models are available, GitHub model
+		// families (e.g. gpt-4o-mini / copilot-fast) won't be in _familyMap. Fall back to the
+		// copilot-base model (the first CustomOAI model) so auxiliary tasks keep working.
+		if (!resolvedModel && this._copilotBaseModel) {
+			resolvedModel = this._copilotBaseModel;
+		}
 		if (!resolvedModel || !isChatModelInformation(resolvedModel)) {
 			throw new Error(await this._getErrorMessage(`Unable to resolve chat model with family selection: ${family}`));
 		}
