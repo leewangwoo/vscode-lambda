@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  gallery:
+    build: .
+    container_name: vscode-gallery
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist extensions and gallery metadata
+      - gallery-data:/data
+      # Mount server code for development (comment out for production)
+      # - ./server.py:/app/server.py:ro
+    environment:
+      - GALLERY_DATA_DIR=/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  gallery-data:

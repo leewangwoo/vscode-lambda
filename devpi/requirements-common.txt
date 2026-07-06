@@ -1,0 +1,52 @@
+# Common Python packages to pre-populate in devpi
+# Run: ./scripts/sync-packages.sh requirements-common.txt
+
+# --- Data Science ---
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+plotly
+jupyter
+jupyterlab
+ipykernel
+notebook
+
+# --- Web Frameworks ---
+flask
+fastapi
+uvicorn
+django
+requests
+httpx
+aiohttp
+
+# --- Dev Tools ---
+pytest
+black
+flake8
+mypy
+isort
+ruff
+
+# --- Database ---
+sqlalchemy
+psycopg2-binary
+pymongo
+redis
+
+# --- Utilities ---
+python-dateutil
+pytz
+tqdm
+click
+rich
+pydantic
+python-dotenv
+
+# --- ML/AI (optional, large) ---
+# scikit-learn
+# torch
+# tensorflow
+# transformers
