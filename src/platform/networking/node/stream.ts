@@ -416,7 +416,6 @@ export class SSEProcessor {
 
 					this.logChoice(choice);
 
-
 					const thinkingDelta = extractThinkingDeltaFromChoice(choice);
 
 					// Once we observe any thinking text or an id in this batch, keep the flag true
@@ -446,19 +445,20 @@ export class SSEProcessor {
 							delta.ipCodeCitations = undefined;
 						}
 
+						const _thinkForCb = thinkingDelta ?? delta?.thinking;
 						finishOffset = await finishedCb(solution.text.join(''), choice.index, {
-							text: solution.flush(),
-							logprobs: choice.logprobs,
-							codeVulnAnnotations: delta?.vulnAnnotations,
-							ipCitations: delta?.ipCodeCitations,
-							copilotReferences: delta?.references,
-							copilotToolCalls: delta?.toolCalls,
-							copilotToolCallStreamUpdates: delta?.toolCallStreamUpdates,
-							_deprecatedCopilotFunctionCalls: delta?.functionCalls,
-							beginToolCalls: delta?.beginToolCalls,
-							copilotErrors: delta?.errors,
-							thinking: thinkingDelta ?? delta?.thinking,
-						});
+								text: solution.flush(),
+								logprobs: choice.logprobs,
+								codeVulnAnnotations: delta?.vulnAnnotations,
+								ipCitations: delta?.ipCodeCitations,
+								copilotReferences: delta?.references,
+								copilotToolCalls: delta?.toolCalls,
+								copilotToolCallStreamUpdates: delta?.toolCallStreamUpdates,
+								_deprecatedCopilotFunctionCalls: delta?.functionCalls,
+								beginToolCalls: delta?.beginToolCalls,
+								copilotErrors: delta?.errors,
+								thinking: _thinkForCb,
+							});
 						if (finishOffset !== undefined) {
 							hadEarlyFinishedSolution = true;
 						}
@@ -557,9 +557,16 @@ export class SSEProcessor {
 					if (!handled) {
 						solution.append(choice);
 
-						// Call finishedCb to determine if the solution is now complete.
-						if (await emitSolution()) {
-							continue;
+						// If this delta has reasoning_content, pass it to emitSolution
+						// so the thinking pipeline picks it up.
+						if (thinkingDelta) {
+							if (await emitSolution({ thinking: thinkingDelta })) {
+								continue;
+							}
+						} else {
+							if (await emitSolution()) {
+								continue;
+							}
 						}
 					}
 

@@ -1,0 +1,79 @@
+networks:
+  llm-net:
+    driver: bridge
+
+  # --- 백엔드 LLM 인스턴스 ---
+
+services:
+  qwen35-4:
+    #image: prism/llama-cpp-tqp:v0.1.1
+    image: prism/llama-cpp-official 
+    container_name: llama-qwen-moe-4
+    environment:
+      - CUDA_VISIBLE_DEVICES=4
+    ports:
+      - "8084:8080"
+    volumes:
+      - /sqream/models:/models:ro
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 204800 --split-mode none --threads 14 --parallel 1 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 --spec-type draft-mtp --spec-draft-n-max 2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all 
+              capabilities: [gpu]
+    networks:
+      - llm-net
+
+  qwen27-5:
+   #image: prism/llama-cpp-tqp:v0.1.1
+    image: prism/llama-cpp-official
+    container_name: llama-qwen-dense-5
+    environment:
+      - CUDA_VISIBLE_DEVICES=5
+    ports:
+      - "8085:8080"
+    volumes:
+      - /sqream/models:/models:ro
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 204800 --split-mode none --threads 14 --parallel 1 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 --spec-type draft-mtp --spec-draft-n-max 2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all 
+              capabilities: [gpu]
+    networks:
+      - llm-net
+
+############################
+# LiteLLM
+############################
+
+  litellm:
+    image:  litellm-airgap:latest
+    entrypoint:
+      - litellm
+    container_name: litellm
+    restart: unless-stopped
+    ports:
+      - "8088:4000"
+    environment:
+      - LITELLM_MASTER_KEY=abcd1234
+      - UI_PASSWORD=abcd1234
+      - AZURE_OPENAI_API_KEY="mock_key"
+      - LITELLM_MODE="development"
+      - STORE_MODEL_IN_DB=False
+    command:
+      - "--config=/app/proxy_server_config.yaml"
+      - "--port=4000"
+    volumes:
+      - ./litellm-config.yaml:/app/proxy_server_config.yaml
+    depends_on:
+      - qwen35-4
+      - qwen27-5
+    networks:
+      - llm-net

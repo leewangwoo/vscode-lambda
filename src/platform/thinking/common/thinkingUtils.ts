@@ -15,6 +15,11 @@ function getThinkingDeltaText(thinking: RawThinkingDelta | undefined): string | 
 	if (thinking.reasoning_text) {
 		return thinking.reasoning_text;
 	}
+	// LiteLLM / llama.cpp / vLLM: reasoning models (e.g. Qwen) emit
+	// reasoning in delta.reasoning_content during streaming.
+	if (thinking.reasoning_content) {
+		return thinking.reasoning_content;
+	}
 	if (thinking.thinking) {
 		return thinking.thinking;
 	}

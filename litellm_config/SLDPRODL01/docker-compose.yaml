@@ -1,0 +1,233 @@
+networks:
+  llm-net:
+    driver: bridge
+
+x-llama-common: &llama-common
+  image: prism/llama-cpp-official
+  restart: unless-stopped
+  volumes:
+    - /sqream/models:/models:ro
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  networks:
+    - llm-net
+
+services:
+
+############################
+# Qwen27
+############################
+
+  qwen27-0:
+    <<: *llama-common
+    container_name: qwen27-0
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    ports:
+      - "8080:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 1
+      --threads 14
+
+  qwen27-1:
+    <<: *llama-common
+    container_name: qwen27-1
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+    ports:
+      - "8081:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 1 
+      --threads 14
+
+  qwen27-2:
+    <<: *llama-common
+    container_name: qwen27-2
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    ports:
+      - "8082:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 1
+      --threads 14
+
+  qwen27-3:
+    <<: *llama-common
+    container_name: qwen27-3
+    environment:
+      - CUDA_VISIBLE_DEVICES=3
+    ports:
+      - "8083:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 1 
+      --threads 14
+
+############################
+# Qwen35 A3B
+############################
+
+  qwen35-4:
+    <<: *llama-common
+    container_name: qwen35-4
+    environment:
+      - CUDA_VISIBLE_DEVICES=4
+    ports:
+      - "8084:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 2
+      --threads 14
+
+  qwen35-5:
+    <<: *llama-common
+    container_name: qwen35-5
+    environment:
+      - CUDA_VISIBLE_DEVICES=5
+    ports:
+      - "8085:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 2
+      --threads 14
+
+  qwen35-6:
+    <<: *llama-common
+    container_name: qwen35-6
+    environment:
+      - CUDA_VISIBLE_DEVICES=6
+    ports:
+      - "8086:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 2
+      --threads 14
+
+  qwen35-7:
+    <<: *llama-common
+    container_name: qwen35-7
+    environment:
+      - CUDA_VISIBLE_DEVICES=7
+    ports:
+      - "8087:8080"
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 204800
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --min-p 0.00
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --parallel 2
+      --threads 14
+
+############################
+# LiteLLM
+############################
+
+  litellm:
+    image:  litellm-airgap:latest
+    entrypoint:
+      - litellm
+    container_name: litellm
+    restart: unless-stopped
+    ports:
+      - "8422:4000"
+    environment:
+      - LITELLM_MASTER_KEY=abcd1234
+      - UI_PASSWORD=abcd1234
+      - AZURE_OPENAI_API_KEY="mock_key"
+      - LITELLM_MODE="development"
+      - STORE_MODEL_IN_DB=False
+
+    command:
+      - "--config=/app/proxy_server_config.yaml"
+      - "--port=4000"
+    volumes:
+      - ./litellm-config.yaml:/app/proxy_server_config.yaml
+    depends_on:
+      - qwen27-0
+      - qwen27-1
+      - qwen27-2
+      - qwen27-3
+      - qwen35-4
+      - qwen35-5
+      - qwen35-6
+      - qwen35-7
+    networks:
+      - llm-net
+

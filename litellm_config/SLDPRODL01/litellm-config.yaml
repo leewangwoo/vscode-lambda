@@ -1,0 +1,61 @@
+router_settings:
+  routing_strategy: least-busy
+
+model_list:
+
+####################################
+# Dense
+####################################
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://qwen27-0:8080/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://qwen27-1:8080/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://qwen27-2:8080/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://qwen27-3:8080/v1
+    api_key: none
+
+####################################
+# MoE
+####################################
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://qwen35-4:8080/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://qwen35-5:8080/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://qwen35-6:8080/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://qwen35-7:8080/v1
+    api_key: none
+

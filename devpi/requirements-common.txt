@@ -1,5 +1,6 @@
 # Common Python packages to pre-populate in devpi
-# Run: ./scripts/sync-packages.sh requirements-common.txt
+# Run: .\scripts\sync-packages.bat requirements-common.txt (Windows)
+#      ./scripts/sync-packages.sh requirements-common.txt (Linux)
 
 # --- Data Science ---
 numpy
@@ -29,6 +30,7 @@ flake8
 mypy
 isort
 ruff
+devpi-client
 
 # --- Database ---
 sqlalchemy
@@ -45,8 +47,22 @@ rich
 pydantic
 python-dotenv
 
+# --- Excel / Office ---
+openpyxl
+xlrd
+
+# --- File System ---
+watchdog
+
+# --- ODBC / Database Drivers ---
+pyodbc
+
+# --- Vector DB / Embeddings ---
+chromadb
+sentence-transformers
+
 # --- ML/AI (optional, large) ---
-# scikit-learn
-# torch
-# tensorflow
-# transformers
+scikit-learn
+torch
+tensorflow
+transformers

@@ -11,6 +11,9 @@ export interface ThinkingDataInMessage {
 	// Copilot API fields for Completions
 	reasoning_opaque?: string;
 	reasoning_text?: string;
+
+	// LiteLLM / llama.cpp / vLLM fields (Qwen reasoning models)
+	reasoning_content?: string;
 }
 
 export interface RawThinkingDelta {
@@ -21,6 +24,9 @@ export interface RawThinkingDelta {
 	// Copilot API fields
 	reasoning_opaque?: string;
 	reasoning_text?: string;
+
+	// LiteLLM / llama.cpp / vLLM fields (Qwen reasoning models)
+	reasoning_content?: string;
 
 	// Anthropic fields
 	thinking?: string;

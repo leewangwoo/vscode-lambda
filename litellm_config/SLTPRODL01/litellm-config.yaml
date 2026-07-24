@@ -1,0 +1,90 @@
+router_settings:
+  routing_strategy: least-busy
+
+litellm_settings:
+  # Pass reasoning_content through from llama.cpp without stripping
+  drop_params: false
+  modify_params: false
+
+model_list:
+
+####################################
+# LOCAL-Dense
+####################################
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://qwen27-5:8080/v1
+    api_key: none
+    drop_params: false
+    # Tell LiteLLM not to process/strip reasoning content
+    extra_body:
+      reasoning_format: raw
+
+####################################
+# LOCAL-MoE
+####################################
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://qwen35-4:8080/v1
+    api_key: none
+
+####################################
+# REMOTE-Dense 
+####################################
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://100.253.190.178:8080/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://100.253.190.178:8081/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://100.253.190.178:8082/v1
+    api_key: none
+
+- model_name: qwen27
+  litellm_params:
+    model: openai/qwen27
+    api_base: http://100.253.190.178:8083/v1
+    api_key: none
+
+
+####################################
+# REMOTE-Moe
+####################################
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://100.253.190.178:8084/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://100.253.190.178:8085/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://100.253.190.178:8086/v1
+    api_key: none
+
+- model_name: qwen35
+  litellm_params:
+    model: openai/qwen35
+    api_base: http://100.253.190.178:8087/v1
+    api_key: none

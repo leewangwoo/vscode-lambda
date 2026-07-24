@@ -1,0 +1,76 @@
+# Caddy reverse-proxy in front of code-marketplace.
+#
+# code-marketplace speaks plain HTTP on :3001 and has no built-in TLS, but
+# VS Code's Content Security Policy refuses non-https gallery URLs, so Caddy
+# terminates TLS here with a self-signed certificate (airgapped networks
+# cannot reach Let's Encrypt).
+#
+# The :8443 port is what the docker-compose port mapping exposes externally.
+{
+	# auto_https off => we bring our own self-signed cert (see entrypoint.sh).
+	auto_https off
+}
+
+:8443 {
+	tls /data/caddy/pki/cert.pem /data/caddy/pki/key.pem
+
+	# CORS note: code-marketplace ALREADY emits its own
+	# "Access-Control-Allow-Origin: *" header (verified against v2.4.2), so we
+	# must NOT add another one here — otherwise the browser sees a duplicate
+	# "*, *" header and blocks the request. We let the backend's CORS headers
+	# pass through unchanged.
+
+	# Answer CORS preflight (OPTIONS) directly without forwarding to backend.
+	# code-marketplace only adds CORS headers on real requests, not on OPTIONS,
+	# so we must attach them here ourselves or the browser blocks the preflight.
+	# VS Code sends many custom headers (x-market-client-id, x-client-name,
+	# x-client-version, ...), so we allow all of them via "*".
+	@options method OPTIONS
+	handle @options {
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+		header Access-Control-Allow-Headers "*"
+		header Access-Control-Max-Age "86400"
+		respond 204
+	}
+
+	encode gzip
+
+	# Let clients download the root CA certificate so they can trust it.
+	# Any of /cert, /cert.pem, /cert.crt serves cert.pem.
+	@cert path /cert /cert.pem /cert.crt
+	handle @cert {
+		rewrite * /cert.pem
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition "attachment; filename=gallery-ca.crt"
+		root * /data/caddy/pki
+		file_server
+	}
+
+	# Health probe passthrough.
+	@health path /healthz
+	handle @health {
+		reverse_proxy code-marketplace:3001
+	}
+
+	# VSIX upload endpoint -> uploader sidecar. External PCs POST .vsix files
+	# here; the uploader writes them to the shared inbox and immediately runs
+	# `code-marketplace add`. Requires X-Upload-Token header.
+	@upload path /upload /upload-batch
+	handle @upload {
+		# uploader does not send CORS headers, so add them here (single source).
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Headers "Content-Type, X-Upload-Token"
+		reverse_proxy uploader:8001
+	}
+
+	# Everything else -> code-marketplace. Send the forwarding headers so
+	# asset/file URLs come back as https://<host>:8443/... as VS Code expects.
+	# (X-Forwarded-Host is passed through by default, so we only set Proto.)
+	handle {
+		reverse_proxy code-marketplace:3001 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto https
+		}
+	}
+}

@@ -53,6 +53,10 @@ devpi login admin --password=admin
 devpi use admin/staging
 
 # Bulk download + upload
+# Windows:
+.\scripts\sync-packages.bat requirements-common.txt
+
+# Linux/macOS:
 ./scripts/sync-packages.sh requirements-common.txt
 ```
 
@@ -73,7 +77,8 @@ devpi/
 ├── docker-compose.yml              # devpi-server Docker config
 ├── README.md                       # This file
 ├── scripts/
-│   ├── sync-packages.sh            # Download & upload packages to devpi
+│   ├── sync-packages.bat           # Download & upload packages to devpi (Windows)
+│   ├── sync-packages.sh            # Download & upload packages to devpi (Linux)
 │   ├── configure-pip.ps1           # Configure pip on user machines
 │   └── configure-pip.sh            # Configure pip on Linux user machines
 └── requirements-common.txt         # Common packages to pre-populate
@@ -93,6 +98,9 @@ devpi login admin --password=admin
 devpi use admin/staging
 
 # Download and upload packages listed in a requirements file
+# Windows:
+.\scripts\sync-packages.bat requirements-common.txt
+# Linux/macOS:
 ./scripts/sync-packages.sh requirements-common.txt
 
 # Or upload a single package

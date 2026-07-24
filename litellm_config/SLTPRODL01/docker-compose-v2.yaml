@@ -1,0 +1,106 @@
+# LiteLLM v2 (1.93.0) + LLM Monitor + llama.cpp — 통합 운영용
+#
+# 이 파일이 메인 docker-compose입니다. 기존 docker-compose.yaml을 대체합니다.
+#
+# 포트 구성:
+#   8084: llama.cpp (qwen35 MoE)
+#   8085: llama.cpp (qwen27 Dense)
+#   8088: LiteLLM v2 (1.93.0) — reasoning_content 지원
+#   8090: LLM Monitor — 인스턴스 실시간 상태
+
+networks:
+  llm-net:
+    driver: bridge
+
+services:
+
+  # ──────────────────────────────────────────────
+  # 백엔드 LLM 인스턴스
+  # ──────────────────────────────────────────────
+
+  qwen35-4:
+    image: prism/llama-cpp-official
+    container_name: llama-qwen-moe-4
+    environment:
+      - CUDA_VISIBLE_DEVICES=4
+    ports:
+      - "8084:8080"
+    volumes:
+      - /sqream/models:/models:ro
+    command: >
+      -m /models/mtp/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 204800 --split-mode none --threads 14 --parallel 1 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 --spec-type draft-mtp --spec-draft-n-max 2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - llm-net
+
+  qwen27-5:
+    image: prism/llama-cpp-official
+    container_name: llama-qwen-dense-5
+    environment:
+      - CUDA_VISIBLE_DEVICES=5
+    ports:
+      - "8085:8080"
+    volumes:
+      - /sqream/models:/models:ro
+    command: >
+      -m /models/mtp/Qwen3.6-27B-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 204800 --split-mode none --threads 14 --parallel 1 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 --spec-type draft-mtp --spec-draft-n-max 2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - llm-net
+
+  # ──────────────────────────────────────────────
+  # LiteLLM v2 (1.93.0) — reasoning_content 전달 지원
+  # ──────────────────────────────────────────────
+
+  litellm:
+    image: litellm-airgap-v2:latest
+    entrypoint:
+      - litellm
+    container_name: litellm
+    restart: unless-stopped
+    ports:
+      - "8088:4000"
+    environment:
+      - LITELLM_MASTER_KEY=dummy-key
+      - STORE_MODEL_IN_DB=False
+    command:
+      - "--config=/app/proxy_server_config.yaml"
+      - "--port=4000"
+    volumes:
+      - ./litellm-config-v2.yaml:/app/proxy_server_config.yaml
+    depends_on:
+      - qwen35-4
+      - qwen27-5
+    networks:
+      - llm-net
+
+  # ──────────────────────────────────────────────
+  # LLM Monitor — 모든 인스턴스의 /slots를 폴링하여
+  # 실시간 busy/available 상태 제공
+  # ──────────────────────────────────────────────
+
+  llm-monitor:
+    image: llm-monitor:latest
+    container_name: llm-monitor
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./monitor-config.py:/app/monitor.py:ro
+    depends_on:
+      - qwen35-4
+      - qwen27-5
+    networks:
+      - llm-net

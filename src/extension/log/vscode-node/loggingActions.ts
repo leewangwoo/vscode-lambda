@@ -18,6 +18,7 @@ import { ICAPIClientService } from '../../../platform/endpoint/common/capiClient
 import { IEnvService, isScenarioAutomation } from '../../../platform/env/common/envService';
 import { IVSCodeExtensionContext } from '../../../platform/extContext/common/extensionContext';
 import { collectErrorMessages, collectSingleLineErrorMessage, ILogService } from '../../../platform/log/common/logService';
+import { LLMHealthMonitor } from '../../byok/vscode-node/llmHealthMonitor';
 import { outputChannel } from '../../../platform/log/vscode/outputChannelLogTarget';
 import { FetchEvent, IFetcherService } from '../../../platform/networking/common/fetcherService';
 import { IFetcher, userAgentLibraryHeader } from '../../../platform/networking/common/networking';
@@ -291,6 +292,13 @@ In corporate networks: [Troubleshooting firewall settings for GitHub Copilot](ht
 			await vscode.window.showTextDocument(document);
 		}));
 		this._context.subscriptions.push(new NetworkStatus(this.fetcherService, this.configurationService, this.experimentationService));
+		// LLM Health Monitor — shows LiteLLM proxy status in the status bar
+		try {
+			this._context.subscriptions.push(new LLMHealthMonitor());
+			console.log('[LAMBDA-HEALTH] Registered via LoggingActionsContrib');
+		} catch (err) {
+			console.error('[LAMBDA-HEALTH] Registration failed:', err);
+		}
 	}
 
 	private async getAuthHeaders(isGHEnterprise: boolean, url: string) {

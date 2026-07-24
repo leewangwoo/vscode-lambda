@@ -52,10 +52,14 @@ timeout = 60
 trusted-host = $DevpiHost
 "@
 
-# Write pip.ini
-Set-Content -Path $pipConfigPath -Value $pipIni -Encoding UTF8
+# Write pip.ini as UTF-8 WITHOUT BOM.
+# PowerShell's "Set-Content -Encoding UTF8" adds a BOM on Windows PowerShell 5.x,
+# which pip cannot parse. .NET's UTF8Encoding($false) writes without BOM.
+# All content is ASCII-only to avoid cp949 locale issues on Korean Windows.
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($pipConfigPath, $pipIni, $utf8NoBom)
 
-Write-Host "✅ pip configuration created: $pipConfigPath" -ForegroundColor Green
+Write-Host "[OK] pip configuration created: $pipConfigPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "  index-url: $IndexUrl"
 Write-Host "  trusted-host: $DevpiHost"

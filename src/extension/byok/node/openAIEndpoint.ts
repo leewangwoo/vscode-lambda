@@ -2,6 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+import * as vscode from 'vscode';
 import type { CancellationToken } from 'vscode';
 import { IChatMLFetcher } from '../../../platform/chat/common/chatMLFetcher';
 import { ChatFetchResponseType, ChatResponse } from '../../../platform/chat/common/commonTypes';
@@ -282,12 +283,28 @@ export class OpenAIEndpoint extends ChatEndpoint {
 
 		if (body) {
 			if (this.modelMetadata.capabilities.supports.thinking) {
-				delete body.temperature;
-				body['max_completion_tokens'] = body.max_tokens;
+				// CustomOAI/LiteLLM (llama.cpp): don't rename max_tokens or
+				// delete temperature. llama.cpp needs max_tokens (not
+				// max_completion_tokens) and works fine with temperature.
+				if (this.modelMetadata.vendor === 'CustomOAI') {
+					// Keep temperature and max_tokens as-is for llama.cpp.
+					// reasoning_content is handled by the SSE parser's
+					// extractThinkingDeltaFromChoice + uEi function.
+				} else {
+					delete body.temperature;
+					body['max_completion_tokens'] = body.max_tokens;
+					delete body.max_tokens;
+				}
+			}
+			// Removing max tokens defaults to the maximum which is what we want for BYOK.
+			// CustomOAI (llama.cpp): set max_tokens from user setting or default.
+			// Without this, llama.cpp uses n_predict=-1 (unlimited) and "hi" can take minutes.
+			if (this.modelMetadata.vendor === 'CustomOAI') {
+				const maxTokens = vscode.workspace.getConfiguration('github.copilot.chat.byok.customoai').get<number>('maxTokens') ?? 4096;
+				body.max_tokens = maxTokens;
+			} else {
 				delete body.max_tokens;
 			}
-			// Removing max tokens defaults to the maximum which is what we want for BYOK
-			delete body.max_tokens;
 			// CustomOAI/LiteLLM (llama.cpp-backed) servers return an empty response when
 			// `stream_options` is present, so omit it for these endpoints.
 			if (!this.useResponsesApi && body.stream && this.modelMetadata.vendor !== 'CustomOAI') {
@@ -304,10 +321,9 @@ export class OpenAIEndpoint extends ChatEndpoint {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json'
 		};
-		// Skip Authorization header for placeholder/empty keys (used by keyless LiteLLM deployments)
+		// Skip Authorization header for placeholder/empty keys (used by keyless deployments)
 		const isPlaceholderKey = !this._apiKey
 			|| this._apiKey === 'none'
-			|| this._apiKey === 'dummy-key'
 			|| this._apiKey === 'mock-offline-token';
 		if (!isPlaceholderKey) {
 			if (this._modelUrl.includes('openai.azure')) {

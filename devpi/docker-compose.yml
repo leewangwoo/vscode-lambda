@@ -2,28 +2,22 @@ version: "3.8"
 
 services:
   devpi:
-    image: devpi/devpi-server:latest
+    image: jonasal/devpi-server:latest
     container_name: devpi-server
     restart: unless-stopped
     ports:
       - "3141:3141"
     volumes:
-      - devpi-data:/data
-      - devpi-files:/root/.devpi/server
+      # 서버 환경에 맞게 좌측 경로를 수정하세요:
+      - /sqream/devpi-data:/data
+      - /sqream/devpi-files:/root/.devpi/server
     environment:
       - DEVPI_HOST=0.0.0.0
       - DEVPI_PORT=3141
-    command: >
-      devpi-server
-      --host 0.0.0.0
-      --port 3141
-      --outside-url http://100.252.201.200:3141
+      - DEVPI_PASSWORD=devpi1234 # ← 반드시 변경하세요
+      - DEVPI_OUTSIDE_URL=http://100.252.201.200:3141
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3141/+api')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3141/+api')" ]
       interval: 30s
       timeout: 10s
       retries: 3
-
-volumes:
-  devpi-data:
-  devpi-files:

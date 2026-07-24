@@ -1,24 +1,75 @@
-version: "3.8"
-
 services:
-  gallery:
-    build: .
-    container_name: vscode-gallery
+  # code-marketplace (https://github.com/coder/code-marketplace) implements the
+  # real VS Code extension-query API and reads VSIX files from a local directory.
+  # It speaks plain HTTP on :3001 with no built-in TLS.
+  code-marketplace:
+    image: ghcr.io/coder/code-marketplace:v2.4.2
+    container_name: code-marketplace
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    command: ["server", "--address", "0.0.0.0:3001", "--extensions-dir", "/extensions", "--sign", "--list-cache-duration", "5s"]
     volumes:
-      # Persist extensions and gallery metadata
-      - gallery-data:/data
-      # Mount server code for development (comment out for production)
-      # - ./server.py:/app/server.py:ro
-    environment:
-      - GALLERY_DATA_DIR=/data
+      # VSIX storage. code-marketplace parses VSIX contents into
+      # publisher/name/version layout under this directory.
+      - /sqream/gallery-data/extensions:/extensions
+      # Shared inbox: the uploader writes VSIXes here, and this same path is
+      # mounted into code-marketplace so `code-marketplace add` can read them.
+      - /sqream/gallery-data/inbox:/inbox:ro
+    # Internal port only - not exposed directly. Caddy fronts it.
+    expose:
+      - "3001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
 
-volumes:
-  gallery-data:
+  # Tiny sidecar that accepts VSIX uploads over HTTP and registers them in
+  # code-marketplace. Needed on airgapped networks: external PCs cannot
+  # `docker cp` into the server, so they POST VSIXes here via Caddy and each
+  # file is added immediately. Mounted docker.sock lets it `docker exec`
+  # into code-marketplace.
+  uploader:
+    build: ./uploader
+    image: lambda-gallery-uploader:latest
+    container_name: lambda-gallery-uploader
+    restart: unless-stopped
+    depends_on:
+      - code-marketplace
+    volumes:
+      # Same inbox as code-marketplace (read-write here).
+      - /sqream/gallery-data/inbox:/inbox
+      # Lets the uploader run `docker exec code-marketplace ...`.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - INBOX_DIR=/inbox
+      - CODE_MARKETPLACE_EXT_DIR=/extensions
+      - CODE_MARKETPLACE_CONTAINER=code-marketplace
+      - UPLOAD_TOKEN=lambda-upload
+    expose:
+      - "8001"
+
+  # Caddy terminates TLS (VS Code CSP requires https gallery URLs) and adds
+  # CORS headers. Airgapped networks cannot reach Let's Encrypt, so the
+  # self-signed cert is minted on first boot (entrypoint.sh) and served at
+  # https://<host>:8443/cert so clients can install + trust it.
+  caddy:
+    build: ./caddy
+    image: lambda-gallery-caddy:latest
+    container_name: lambda-gallery-caddy
+    restart: unless-stopped
+    depends_on:
+      - code-marketplace
+      - uploader
+    ports:
+      # External HTTPS port. This is the URL VS Code's product.json points at.
+      - "8443:8443"
+    volumes:
+      # Cert persistence (avoids regenerating on every restart).
+      - /sqream/gallery-data/certs:/data/caddy/pki
+    environment:
+      - GALLERY_HOST=100.252.201.200
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:8443/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

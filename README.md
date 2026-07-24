@@ -16,24 +16,31 @@ VS Code Lambda는 다음 세 가지 목표를 달성합니다:
 ┌──────────────────────────────────────────────────────────────┐
 │                       내부망 (폐쇄망)                           │
 │                                                               │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐          │
-│  │ VS Code     │  │ 확장 갤러리   │  │ devpi       │          │
-│  │ 클라이언트   │  │ :8000        │  │ :3141       │          │
-│  │ (Windows)   │  │ (FastAPI)    │  │ (PyPI Proxy)│          │
-│  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘          │
-│         │                │                  │                  │
-│         │ 확장 설치/업데이트 │ VSIX 서빙       │ pip 패키지       │
-│         │                │                  │                  │
-│  ┌──────┴──────┐  ┌──────┴───────┐                            │
+│  ┌─────────────┐                                              │
+│  │ VS Code     │  확장 설치/업데이트 (HTTPS)                     │
+│  │ 클라이언트   │ ─────────────────────┐                        │
+│  │ (Windows)   │                      ▼                        │
+│  └──────┬──────┘              ┌────────────┐                   │
+│         │                     │ Caddy :8443│ (TLS + CORS)       │
+│         │                     └─────┬──────┘                   │
+│         │                           ▼                          │
+│         │                ┌─────────────────────┐               │
+│         │                │ code-marketplace    │               │
+│         │                │ :3001 (내부 전용)    │               │
+│         │                │ (VS Code 갤러리 API) │               │
+│         │                └─────────────────────┘               │
+│         │                                                      │
+│         │ pip 패키지                                           │
+│         ▼                                                      │
+│  ┌─────────────┐                                               │
+│  │ devpi :3141 │ (PyPI Proxy)                                  │
+│  └─────────────┘                                               │
+│                                                               │
+│  ┌─────────────┐  ┌──────────────┐                            │
 │  │ LiteLLM     │  │ llama.cpp    │                            │
 │  │ :8088       │──│ :8084/8085   │                            │
 │  │ (LLM Proxy) │  │ (Qwen 모델)   │                            │
 │  └─────────────┘  └──────────────┘                            │
-│                                                               │
-│              ┌───────────────────┐                            │
-│              │ Docker Host       │                            │
-│              │ (Linux 서버)       │                            │
-│              └───────────────────┘                            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,7 +48,8 @@ VS Code Lambda는 다음 세 가지 목표를 달성합니다:
 
 | 서비스 | 포트 | 용도 |
 |--------|------|------|
-| 확장 갤러리 서버 | 8000 | VS Code 확장 검색/설치/업데이트 |
+| Caddy (HTTPS 리버스 프록시) | 8443 | VS Code 확장 검색/설치/업데이트 (외부 노출) |
+| code-marketplace (내부) | 3001 | VS Code 갤러리 API (Caddy 뒤단) |
 | LiteLLM 프록시 | 8088 | LLM 모델 라우팅 |
 | devpi (PyPI 프록시) | 3141 | Python 패키지 관리 |
 | llama.cpp (Qwen3.6-35B) | 8084 | MoE 모델 서버 |
@@ -52,17 +60,22 @@ VS Code Lambda는 다음 세 가지 목표를 달성합니다:
 ```
 vscode-lambda/
 ├── src/                        # 확장 소스 코드
-├── gallery-server/             # 확장 갤러리 서버 (FastAPI + Docker)
-│   ├── server.py               # 갤러리 API 서버
-│   ├── Dockerfile
-│   ├── docker-compose.yml
+├── gallery-server/             # 확장 갤러리 (code-marketplace + uploader + Caddy)
+│   ├── docker-compose.yml      # 서비스 정의
+│   ├── caddy/                  # HTTPS 리버스 프록시 (자체 서명 인증서)
+│   │   ├── Dockerfile
+│   │   ├── Caddyfile
+│   │   └── entrypoint.sh
+│   ├── uploader/               # VSIX 업로드 사이드카 (/upload → 자동 등록)
+│   │   ├── Dockerfile
+│   │   └── app.py
 │   └── scripts/                # 갤러리 관리 스크립트
 ├── devpi/                      # Python 패키지 서버
 │   ├── docker-compose.yml
 │   └── scripts/                # 패키지 동기화 및 pip 설정 스크립트
 ├── lambda-chat-deploy/         # 클라이언트 배포 패키지
 │   ├── install.bat             # 원클릭 설치 스크립트
-│   ├── configure-vscode.ps1    # VS Code 갤러리 URL 설정
+│   ├── configure-vscode.ps1    # VS Code 갤러리 URL + 인증서 설정
 │   └── copilot-chat-*.vsix     # Lambda 확장 파일
 ├── OFFLINE-GUIDE.md            # 상세 배포 가이드 (한글)
 └── package.json                # 확장 메타데이터
@@ -73,22 +86,31 @@ vscode-lambda/
 ### 서버 설정 (내부망 Linux 서버)
 
 ```bash
-# 1. 확장 갤러리 서버 시작
+# 1. 확장 갤러리 서버 시작 (code-marketplace + uploader + Caddy)
 cd gallery-server
-docker compose up -d --build
+docker compose up -d
 
 # 2. Python 패키지 서버 시작
 cd ../devpi
 docker compose up -d
+```
 
-# 3. Lambda 확장을 갤러리에 등록
-./gallery-server/scripts/publish.sh lambda-chat-deploy/copilot-chat-999.1.0.vsix http://localhost:8000
+### 확장 등록 (외부 PC에서)
+
+갤러리가 떠 있으면 외부 PC에서 HTTPS로 VSIX를 올려 자동 등록합니다.
+
+```cmd
+:: Lambda 확장 등록 (서버에 접근 가능한 PC에서, 인터넷 불필요)
+gallery-server\scripts\publish.bat lambda-chat-deploy\copilot-chat-999.1.0.vsix
+
+:: 마켓플레이스 공통 확장 일괄 등록 (인터넷 필요)
+gallery-server\scripts\fetch-vscode-extensions.bat
 ```
 
 ### 클라이언트 설정 (내부망 Windows PC)
 
 ```powershell
-# 1. 확장 설치 + 갤러리 등록 (원클릭)
+# 1. 확장 설치 + 갤러리 등록 + 인증서 신뢰 (원클릭)
 .\lambda-chat-deploy\install.bat
 
 # 2. Python pip 설정
@@ -110,9 +132,11 @@ docker compose up -d
 
 ### 내부 확장 갤러리
 
-- VS Code 확장 탭에서 내부 갤러리 검색/설치
-- 자동 업데이트 (버전 비교 → 알림 → 설치)
-- 버전 관리 (semver 기반)
+- [code-marketplace](https://github.com/coder/code-marketplace) (오픈소스) 사용
+- VS Code의 실제 갤러리 API 계약 구현 → 검색·설치·자동 업데이트 완벽 호환
+- uploader 사이드카로 외부 PC에서 HTTPS 업로드만 하면 자동 등록 (서버 접속 불필요)
+- Caddy HTTPS 리버스 프록시로 VS Code CSP 정책 충족
+- 자체 서명 인증서 자동 생성 및 배포 (`configure-vscode.ps1 -InstallCert`)
 - 마켓플레이스 확장 다운로드 → 내부 갤러리 등록
 
 ### 내부 Python 패키지 관리
@@ -124,7 +148,9 @@ docker compose up -d
 ## 기술 스택
 
 - **확장**: TypeScript, VS Code Extension API
-- **갤러리 서버**: Python, FastAPI, Docker
+- **갤러리 API**: code-marketplace (Go, by Coder)
+- **업로드 사이드카**: Python, FastAPI (docker-ce-cli로 `docker exec`)
+- **리버스 프록시**: Caddy (TLS 종단, CORS)
 - **패키지 서버**: devpi-server, Docker
 - **LLM 백엔드**: llama.cpp, LiteLLM, Qwen3.6
 

@@ -140,7 +140,10 @@ export abstract class AbstractCustomOAIBYOKModelProvider extends AbstractOpenAIC
 			vision: !!model.capabilities?.imageInput || false,
 			name: model.name,
 			url,
-			thinking: modelConfiguration?.thinking ?? false,
+			// CustomOAI/LiteLLM (llama.cpp-backed) models like Qwen3.6 support
+			// reasoning_content in streaming. Default to true so the reasoning
+			// content is extracted and displayed.
+			thinking: modelConfiguration?.thinking ?? true,
 			streaming: modelConfiguration?.streaming,
 			requestHeaders: modelConfiguration?.requestHeaders,
 			zeroDataRetentionEnabled: modelConfiguration?.zeroDataRetentionEnabled

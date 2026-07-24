@@ -31,6 +31,8 @@ export class PseudoStopStartResponseProcessor implements IResponseProcessor {
 	private currentStartStop: StartStopMapping | undefined = undefined;
 	private nonReportedDeltas: IResponseDelta[] = [];
 	private thinkingActive: boolean = false;
+	private _thinkingText: string = '';
+	private _thinkingEmittedLen: number = 0;
 
 	constructor(
 		private readonly stopStartMappings: readonly StartStopMapping[],
@@ -55,12 +57,39 @@ export class PseudoStopStartResponseProcessor implements IResponseProcessor {
 		if (delta.thinking) {
 			// Don't send parts that are only encrypted content
 			if (!isEncryptedThinkingDelta(delta.thinking) || delta.thinking.text) {
-				progress.thinkingProgress(delta.thinking);
-				this.thinkingActive = true;
+				let chunk = typeof delta.thinking.text === 'string' ? delta.thinking.text : '';
+				// Escape < and > so that hallucinated XML tags like <function_results>
+				// are shown as plain text instead of being interpreted as HTML/markdown.
+				chunk = chunk.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+				if (!this.thinkingActive) {
+					// First reasoning chunk — emit header
+					this.thinkingActive = true;
+					this._thinkingText = '';
+					this._thinkingEmittedLen = 0;
+					progress.markdown('\n\n---\n\n**🧠 Reasoning**\n\n');
+				}
+				this._thinkingText += chunk;
+				// Stream reasoning in batches of ~10 chars for smoother output
+				// without overwhelming the linkifier pipeline.
+				const unflushed = this._thinkingText.length - this._thinkingEmittedLen;
+				if (unflushed >= 10) {
+					const toEmit = this._thinkingText.substring(this._thinkingEmittedLen);
+					this._thinkingEmittedLen = this._thinkingText.length;
+					progress.markdown(toEmit);
+				}
 			}
 		} else if (this.thinkingActive) {
-			progress.thinkingProgress({ id: '', text: '', metadata: { vscodeReasoningDone: true, stopReason: delta.text ? 'text' : 'other' } });
+			// Reasoning done — flush remaining text, then separator.
 			this.thinkingActive = false;
+			const remaining = this._thinkingText.substring(this._thinkingEmittedLen);
+			if (this._thinkingText.trim()) {
+				if (remaining) {
+					progress.markdown(remaining);
+				}
+				progress.markdown('\n\n---\n\n');
+			}
+			this._thinkingText = '';
+			this._thinkingEmittedLen = 0;
 		}
 
 		reportCitations(delta, progress);
@@ -176,6 +205,8 @@ export class PseudoStopStartResponseProcessor implements IResponseProcessor {
 			this.currentStartStop = undefined;
 			this.nonReportedDeltas = [];
 			this.thinkingActive = false;
+			this._thinkingText = '';
+			this._thinkingEmittedLen = 0;
 			if (delta.retryReason === 'network_error' || delta.retryReason === 'server_error') {
 				progress.clearToPreviousToolInvocation(ChatResponseClearToPreviousToolInvocationReason.NoReason);
 			} else if (delta.retryReason === FilterReason.Copyright) {

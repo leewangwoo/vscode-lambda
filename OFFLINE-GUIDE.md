@@ -26,14 +26,29 @@
 ┌──────────────────────────────────────────────────────────────┐
 │                       내부망 (폐쇄망)                           │
 │                                                               │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐          │
-│  │ VS Code     │  │ 확장 갤러리   │  │ devpi       │          │
-│  │ 클라이언트   │  │ :8000        │  │ :3141       │          │
-│  │ (Windows)   │  │ (FastAPI)    │  │ (PyPI Proxy)│          │
-│  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘          │
-│         │ 확장 설치/업데이트  VSIX 서빙       pip 패키지         │
-│         │                │                  │                  │
-│  ┌──────┴──────┐  ┌──────┴───────┐                            │
+│  ┌─────────────┐                                              │
+│  │ VS Code     │  확장 설치/업데이트 (HTTPS)                     │
+│  │ 클라이언트   │ ─────────────────────┐                        │
+│  │ (Windows)   │                      ▼                        │
+│  └──────┬──────┘              ┌──────────────┐                 │
+│         │                     │ Caddy :8443  │ (TLS 종단)       │
+│         │                     │ (자체서명 인증) │                 │
+│         │                     └──────┬───────┘                 │
+│         │                            │ 리버스 프록시              │
+│         │                            ▼                         │
+│         │                     ┌──────────────────┐             │
+│         │                     │ code-marketplace │             │
+│         │                     │ :3001 (내부 전용)  │             │
+│         │                     │ (VS Code API)    │             │
+│         │                     └──────────────────┘             │
+│         │                                                      │
+│         │ pip 패키지                                           │
+│         ▼                                                      │
+│  ┌─────────────┐                                               │
+│  │ devpi :3141 │ (PyPI Proxy)                                  │
+│  └─────────────┘                                               │
+│                                                               │
+│  ┌─────────────┐  ┌──────────────┐                            │
 │  │ LiteLLM     │  │ llama.cpp    │                            │
 │  │ :8088       │──│ :8084/8085   │                            │
 │  │ (LLM Proxy) │  │ (Qwen 모델)   │                            │
@@ -41,11 +56,17 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
+> code-marketplace는 평문 HTTP로만 동작하지만, VS Code의 CSP 정책이
+> HTTPS 갤러리 URL만 허용하므로 Caddy 리버스 프록시로 TLS를 종단합니다.
+> 폐쇄망에서는 Let's Encrypt를 사용할 수 없으므로 자체 서명 인증서를
+> 자동 생성하고 클라이언트에서 신뢰해야 합니다.
+
 ### 포트 할당
 
 | 서비스 | 포트 | 용도 |
 |--------|------|------|
-| 확장 갤러리 서버 | 8000 | VS Code 확장 검색/설치/업데이트 |
+| Caddy (HTTPS 리버스 프록시) | 8443 | VS Code 확장 검색/설치/업데이트 (외부 노출) |
+| code-marketplace (내부) | 3001 | VS Code 갤러리 API (Caddy 뒤단, 외부 비노출) |
 | LiteLLM 프록시 | 8088 | LLM 모델 라우팅 |
 | devpi (PyPI 프록시) | 3141 | Python 패키지 관리 |
 | llama.cpp (Qwen3.6-35B) | 8084 | MoE 모델 서버 |
@@ -61,26 +82,69 @@
 
 ## 2. 서버 설정
 
-### 2.1 저장소 복제
+### 2.1 Docker 이미지 준비
+
+내부망은 인터넷이 차단되어 있으므로, **외부망에서 Docker 이미지를 미리 빌드하여 tar 파일로 내부망으로 가져가야 합니다.**
+
+#### 외부망 Windows PC에서 이미지 빌드 (인터넷 필요)
+
+```cmd
+:: 저장소 복제
+git clone https://github.com/leewangwoo/vscode-lambda.git
+cd vscode-lambda
+
+:: Docker 이미지 빌드 + tar 파일로 내보내기
+gallery-server\scripts\build-offline-image.bat .\offline-images
+```
+
+생성되는 파일:
+
+```
+offline-images\
+├── code-marketplace.tar   # VS Code 갤러리 API 백엔드 (오픈소스)
+├── caddy.tar              # HTTPS 리버스 프록시 (TLS 종단)
+└── devpi-server.tar       # devpi Python 패키지 서버
+```
+
+#### 내부망 서버에서 이미지 로드
+
+`offline-images/` 폴더 전체를 내부망 서버로 복사한 후:
 
 ```bash
-git clone https://github.com/leewangwoo/vscode-lambda.git
+# tar 파일에서 Docker 이미지 로드
+./gallery-server/scripts/load-offline-images.sh ./offline-images
+
+# 로드 확인
+docker images | grep -E "code-marketplace|lambda-gallery-caddy|devpi"
+```
+
+### 2.2 소스 코드 복사
+
+저장소 전체를 내부망 서버로 복사합니다 (USB, 내부망 파일 서버 등).
+
+```bash
+# 내부망 서버에 저장소 복사 후
 cd vscode-lambda
 ```
 
-### 2.2 IP 주소 설정
+> **참고:** Docker 이미지는 2.1에서 로드했으므로, 내부망에서 빌드(`docker build`)할 필요가 없습니다. `docker-compose.yml`은 사전 빌드된 이미지를 사용하도록 설정되어 있습니다.
+
+### 2.3 IP 주소 설정
 
 서버 IP가 `100.252.201.200`이 아닌 경우, 다음 파일에서 IP를 변경하세요:
 
 | 파일 | 수정 항목 |
 |------|-----------|
 | `lambda-chat-deploy/install.bat` | `GALLERY_URL` 값 |
+| `gallery-server/docker-compose.yml` | `GALLERY_HOST` 환경변수 (Caddy 인증서 CN/SAN) |
 | `devpi/docker-compose.yml` | `--outside-url` 값 |
 | `devpi/scripts/sync-packages.sh` | 기본 URL |
 | `devpi/scripts/configure-pip.ps1` | 기본 URL |
-| `gallery-server/scripts/fetch-vscode-extensions.sh` | 기본 URL |
 
-### 2.3 LiteLLM 설정
+> `GALLERY_HOST`는 자체 서명 인증서에 포함되는 호스트 이름/IP입니다.
+> 클라이언트가 접속할 주소와 일치해야 인증서 검증이 통과합니다.
+
+### 2.4 LiteLLM 설정
 
 LiteLLM은 이미 구성되어 있다고 가정합니다. 설정 파일(`litellm-config.yaml`)에서 다음을 확인:
 
@@ -105,29 +169,64 @@ LiteLLM 프록시 주소: `http://<서버IP>:8088/v1`
 
 ## 3. 확장 갤러리 서버
 
+확장 갤러리는 Coder의 오픈소스 **code-marketplace**를 사용합니다.
+VS Code의 실제 갤러리 API 계약을 구현하여 검색/설치/자동 업데이트가
+그대로 동작합니다.
+
+- **code-marketplace** (`:3001`, 내부 전용): VSIX 파일을 읽어 VS Code 갤러리 API 제공
+- **uploader** (`:8001`, 내부 전용): 외부 PC에서 HTTPS로 VSIX를 올리면(`POST /upload`)
+  code-marketplace에 자동 등록. 서버 접속/SSH 불필요
+- **Caddy** (`:8443`, 외부 노출): HTTPS 종단 + CORS 헤더 추가, code-marketplace/uploader로 라우팅
+
 ### 3.1 서버 시작
 
 ```bash
 cd gallery-server
-docker compose up -d --build
+docker compose up -d
 ```
 
-서버가 `http://<서버IP>:8000`에서 실행됩니다.
+> Caddy는 첫 실행 시 자체 서명 인증서를 자동 생성하여
+> `/sqream/gallery-data/certs/`에 저장합니다.
+
+서버가 `https://<서버IP>:8443`에서 실행됩니다.
+
+```bash
+# 헬스 체크 (인증서 검증 건너뜀)
+curl -k https://<서버IP>:8443/healthz
+
+# 인증서 다운로드 (클라이언트 신뢰용)
+curl -k https://<서버IP>:8443/cert -o gallery-ca.crt
+```
 
 ### 3.2 Lambda 확장 등록
 
-```bash
-# Lambda Chat VSIX를 갤러리에 업로드
-./gallery-server/scripts/publish.sh lambda-chat-deploy/copilot-chat-999.1.0.vsix http://<서버IP>:8000
+외부 PC에서 **HTTPS로 VSIX를 업로드하면 갤러리에 자동 등록**됩니다. 서버에 접속할 필요 없이 publish.bat 한 번이면 끝납니다.
+
+```cmd
+:: 외부 PC에서 (갤러리 서버에 접근 가능하면 됨, 인터넷 불필요)
+gallery-server\scripts\publish.bat lambda-chat-deploy\copilot-chat-999.1.0.vsix
 ```
+
+여러 파일이나 디렉토리도 가능:
+
+```cmd
+gallery-server\scripts\publish.bat C:\extensions
+gallery-server\scripts\publish.bat ext1.vsix ext2.vsix
+```
+
+내부적으로는 `POST https://<서버IP>:8443/upload` (헤더 `X-Upload-Token`)로 전송 →
+uploader 사이드카가 `code-marketplace add`를 실행하여 자동 등록합니다.
+
+> 등록 직후 약 5초 이내 캐시 갱신 후 갤러리에 표시됩니다
+> (`--list-cache-duration 5s` 설정).
 
 ### 3.3 공통 VS Code 확장 등록
 
-외부망 PC에서 실행 (인터넷 필요):
+외부망 PC에서 실행 (인터넷 필요). 마켓플레이스에서 VSIX를 다운로드하여
+갤러리 서버의 `/upload`로 전송합니다:
 
-```bash
-# 마켓플레이스에서 확장을 다운로드하여 내부 갤러리에 등록
-./gallery-server/scripts/fetch-vscode-extensions.sh http://<서버IP>:8000
+```cmd
+gallery-server\scripts\fetch-vscode-extensions.bat
 ```
 
 등록되는 확장:
@@ -140,19 +239,27 @@ docker compose up -d --build
 
 ### 3.4 갤러리 확인
 
-```bash
-# 등록된 확장 목록 확인
-curl http://<서버IP>:8000/api/extensions | python3 -m json.tool
+VS Code 갤러리 API를 직접 조회하여 등록된 확장을 확인합니다:
 
-# 갤러리 정보
-curl http://<서버IP>:8000/
+```bash
+# 검색 쿼리 (VS Code가 보내는 형식)
+curl -k -X POST https://<서버IP>:8443/api/extensionquery \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json;api-version=3.0-preview.1" \
+  --data '{"filters":[{"criteria":[{"filterType":8,"value":"Microsoft.VisualStudio.Code"}]}],"flags":439}' \
+  | python3 -m json.tool
 ```
 
 ### 3.5 확장 삭제 (필요시)
 
+확장 삭제는 서버에서 직접 실행해야 합니다 (업로드와 달리 HTTP API가 없음):
+
 ```bash
 # 특정 버전 삭제
-curl -X DELETE http://<서버IP>:8000/api/extensions/ms-python.python/2024.0.0
+docker exec code-marketplace code-marketplace remove ms-python.python@2024.0.0 --extensions-dir /extensions
+
+# 특정 확장의 모든 버전 삭제
+docker exec code-marketplace code-marketplace remove ms-python.python --all --extensions-dir /extensions
 ```
 
 ---
@@ -196,6 +303,9 @@ devpi login admin --password=<비밀번호>
 devpi use admin/staging
 
 # 공통 패키지 일괄 동기화
+# Windows:
+.\devpi\scripts\sync-packages.bat devpi\requirements-common.txt http://<서버IP>:3141
+# Linux/macOS:
 ./devpi/scripts/sync-packages.sh devpi/requirements-common.txt http://<서버IP>:3141
 ```
 
@@ -277,8 +387,8 @@ npx vsce package --no-git-tag-version --no-dependencies
 
 ### 5.3 갤러리에 새 버전 등록
 
-```bash
-./gallery-server/scripts/publish.sh copilot-chat-999.2.0.vsix http://<서버IP>:8000
+```cmd
+gallery-server\scripts\publish.bat copilot-chat-999.2.0.vsix
 ```
 
 VS Code 클라이언트에서 자동으로 업데이트 알림이 표시됩니다.
@@ -340,42 +450,45 @@ npm version minor
 npm run build
 npx vsce package --no-git-tag-version --no-dependencies
 
-# 2. 갤러리에 등록
-./gallery-server/scripts/publish.sh copilot-chat-999.2.0.vsix http://<서버IP>:8000
+# 2. 갤러리에 등록 (배포 서버/클라이언트 PC에서)
+gallery-server\scripts\publish.bat copilot-chat-999.2.0.vsix
 
 # 3. 클라이언트는 자동 업데이트 (extensions.autoUpdate 기본값 on)
 ```
 
 ### 7.2 새 VS Code 확장 추가
 
-```bash
-# 외부망에서 마켓플레이스 확장 다운로드 → 내부 갤러리 등록
-./gallery-server/scripts/fetch-vscode-extensions.sh http://<서버IP>:8000
+```cmd
+:: 외부망에서 마켓플레이스 확장 다운로드 → 내부 갤러리 등록
+gallery-server\scripts\fetch-vscode-extensions.bat
 ```
 
-또는 특정 확장만:
+또는 수동으로 VSIX를 확보한 뒤 publish.bat으로 등록:
 
 ```bash
-# 마켓플레이스에서 VSIX 다운로드
+# 마켓플레이스에서 VSIX 다운로드 (외부망)
 curl -sL "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/<publisher>/vsextensions/<name>/latest/vspackage" -o ext.vsix.gz
 gzip -d ext.vsix.gz
 
-# 갤러리에 등록
-curl -X POST -F "file=@ext.vsix" http://<서버IP>:8000/api/upload
+# 갤러리에 등록 (배포 서버에서)
+gallery-server\scripts\publish.bat ext.vsix
 ```
 
 ### 7.3 Python 패키지 추가
 
 ```bash
 # 외부망에서 패키지 동기화
+# Windows:
+.\devpi\scripts\sync-packages.bat <requirements.txt> http://<서버IP>:3141
+# Linux/macOS:
 ./devpi/scripts/sync-packages.sh <requirements.txt> http://<서버IP>:3141
 ```
 
 ### 7.4 백업
 
 ```bash
-# 확장 갤러리 백업
-docker cp vscode-gallery:/data ./gallery-backup
+# 확장 갤러리 백업 (VSIX + 인증서)
+tar -czf gallery-backup.tar.gz /sqream/gallery-data
 
 # devpi 백업
 docker cp devpi-server:/data ./devpi-backup
@@ -435,8 +548,9 @@ devpi upload /tmp/pkg/<패키지명>-*.whl
 
 **확인사항:**
 - VS Code 설정에서 `extensions.autoUpdate`이 `true`인지 확인
-- `product.json`의 갤러리 URL이 올바른지 확인
-- 갤러리 서버가 실행 중인지 확인: `curl http://<서버IP>:8000/health`
+- `product.json`의 갤러리 URL이 올바른지 확인 (`/api`, `/item`, `/files/...`)
+- 갤러리 서버가 실행 중인지 확인: `curl -k https://<서버IP>:8443/healthz`
+- 자체 서명 인증서가 신뢰되는지 확인 (configure-vscode.ps1 -InstallCert)
 
 ### 8.7 확장이 활성화되지 않음 (Proposed API)
 
@@ -456,27 +570,33 @@ devpi upload /tmp/pkg/<패키지명>-*.whl
 vscode-lambda/
 ├── src/                           # 확장 소스 코드
 ├── gallery-server/                # 확장 갤러리 서버
-│   ├── server.py                  # FastAPI 갤러리 서버
-│   ├── docker-compose.yml         # Docker 설정
-│   ├── Dockerfile
-│   ├── requirements.txt           # Python 의존성
+│   ├── docker-compose.yml         # code-marketplace + uploader + Caddy 서비스 정의
 │   ├── README.md                  # 갤러리 서버 가이드
+│   ├── caddy/                     # HTTPS 리버스 프록시 (자체 서명 인증서)
+│   │   ├── Dockerfile
+│   │   ├── Caddyfile              # TLS 종단 + CORS + /cert + /upload 라우팅
+│   │   └── entrypoint.sh          # 인증서 자동 생성 후 Caddy 실행
+│   ├── uploader/                  # VSIX 업로드 사이드카 (/upload → 자동 등록)
+│   │   ├── Dockerfile
+│   │   └── app.py
 │   └── scripts/
-│       ├── publish.sh             # VSIX 갤러리 업로드
-│       ├── add_extension.py       # VSIX 로컬 등록
-│       ├── fetch-vscode-extensions.sh  # 마켓플레이스 확장 다운로드
-│       └── configure-vscode.ps1   # VS Code 갤러리 URL 설정
+│       ├── build-offline-image.bat    # 외부망(Windows): Docker 이미지 빌드 + tar 내보내기
+│       ├── load-offline-images.sh     # 내부망(Linux): tar에서 Docker 이미지 로드
+│       ├── publish.bat                # 외부 PC: VSIX → POST /upload (자동 등록)
+│       ├── fetch-vscode-extensions.bat # 마켓플레이스 확장 다운로드 + /upload
+│       └── configure-vscode.ps1       # product.json 갤러리 URL + 인증서 신뢰
 ├── devpi/                         # Python 패키지 서버
 │   ├── docker-compose.yml         # devpi Docker 설정
 │   ├── requirements-common.txt    # 공통 패키지 목록
 │   ├── README.md                  # devpi 가이드
 │   └── scripts/
-│       ├── sync-packages.sh       # 패키지 동기화
+│       ├── sync-packages.bat      # 패키지 동기화 (Windows)
+│       ├── sync-packages.sh       # 패키지 동기화 (Linux)
 │       ├── configure-pip.ps1      # Windows pip 설정
 │       └── configure-pip.sh       # Linux pip 설정
 ├── lambda-chat-deploy/            # 클라이언트 배포 패키지
 │   ├── install.bat                # 원클릭 설치 스크립트
-│   ├── configure-vscode.ps1       # 갤러리 URL 설정
+│   ├── configure-vscode.ps1       # 갤러리 URL 설정 (configure-vscode.ps1 복사본)
 │   ├── copilot-chat-original.vsix # 순정 Copilot Chat
 │   ├── copilot-chat-*.vsix        # Lambda 커스텀 확장
 │   └── README.txt                 # 설치 가이드

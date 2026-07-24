@@ -64,3 +64,14 @@ test/aml/out
 *.vsix
 # Allow VSIX files in the deployment package
 !lambda-chat-deploy/*.vsix
+
+# Build artifacts and large binaries
+copilot-builtin.zip
+copilot-chat-*.vsix
+offline-images/
+scratch/
+lambda-chat-deploy/logs/
+lambda-chat-deploy/copilot-chat-*.vsix
+litellm_config/airgap/litellm-airgap-v2.tar
+litellm_config/llm-monitor/llm-monitor.tar
+*.tar

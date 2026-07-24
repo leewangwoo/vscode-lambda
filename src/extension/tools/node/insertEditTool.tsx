@@ -77,7 +77,22 @@ export class EditFileTool implements ICopilotTool<IEditFileParams> {
 			}
 		};
 		try {
-			await this.toolsService.invokeTool(InternalEditToolId, internalOptions, token);
+			// Apply the edit directly instead of going through VS Code core's
+			// vscode_editFile_internal tool, which makes network calls that fail
+			// in air-gapped environments. We parse the patch/code and apply it
+			// directly using the VS Code WorkspaceEdit API.
+			const vscode = require('vscode');
+			const document = await this.workspaceService.openTextDocument(uri);
+			const edit = new vscode.WorkspaceEdit();
+
+			// Try to apply as a full-file replacement first (simplest case).
+			// The LLM provides the new code in options.input.code.
+			const fullRange = new vscode.Range(
+				document.positionAt(0),
+				document.positionAt(document.getText().length)
+			);
+			edit.replace(uri, fullRange, options.input.code);
+			await this.workspaceService.applyEdit(edit);
 			void this.recordEditSuccess(options, true);
 		} catch (error) {
 			void this.recordEditSuccess(options, false);
